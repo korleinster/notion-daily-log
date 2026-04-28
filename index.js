@@ -189,15 +189,31 @@ async function convertBlock(block, dateInfo, addedItems) {
 
 async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
   const addedItems = [];
-  const converted = await convertBlock({ id: sourceColumnListId, type: 'column_list', column_list: {} }, dateInfo, addedItems);
 
-  if (!converted || !converted.children || converted.children.length === 0) {
-    throw new Error('변환된 블록이 비어있습니다.');
+  // column_list 하위의 column 블록들 직접 가져오기
+  const columnBlocks = await getAllBlocks(sourceColumnListId);
+  const convertedColumns = [];
+
+  for (const col of columnBlocks) {
+    if (col.type !== 'column') continue;
+    const subBlocks = await getAllBlocks(col.id);
+    const convertedChildren = [];
+    for (const sub of subBlocks) {
+      const converted = await convertBlock(sub, dateInfo, addedItems);
+      if (converted) convertedChildren.push(converted);
+    }
+    if (convertedChildren.length > 0) {
+      convertedColumns.push({ object: 'block', type: 'column', column: {}, children: convertedChildren });
+    }
+  }
+
+  if (convertedColumns.length < 2) {
+    throw new Error();
   }
 
   await notion.blocks.children.append({
     block_id: monthPageId,
-    children: [converted],
+    children: [{ object: 'block', type: 'column_list', column_list: {}, children: convertedColumns }],
   });
 
   return addedItems;

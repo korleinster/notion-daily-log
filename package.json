@@ -1,0 +1,12 @@
+{
+  "name": "notion-daily-log",
+  "version": "1.0.0",
+  "description": "Notion 일일업무일지 자동화",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15"
+  }
+}

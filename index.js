@@ -124,14 +124,13 @@ async function todayAlreadyExists(monthPageId, todayStr) {
   return false;
 }
 
-// 페이지에서 가장 마지막 column_list 블록 ID 반환
+// 페이지에서 가장 첫 번째 column_list 블록 ID 반환 (최신 날짜)
 async function findLastColumnList(pageId) {
   const blocks = await getAllBlocks(pageId);
-  let last = null;
   for (const block of blocks) {
-    if (block.type === 'column_list') last = block.id;
+    if (block.type === 'column_list') return block.id;
   }
-  return last;
+  return null;
 }
 
 function replaceDateInRichText(richText, { year, month, day, dayName }) {

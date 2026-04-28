@@ -241,7 +241,10 @@ async function copyBlockWithReset(block, dateInfo) {
     const children = await getAllBlocks(id);
     const filteredChildren = children.filter(child => !isCheckedTodo(child));
     if (filteredChildren.length > 0) {
-      copied.children = await Promise.all(filteredChildren.map(b => copyBlockWithReset(b, dateInfo)));
+      const subChildren = await Promise.all(filteredChildren.map(b => copyBlockWithReset(b, dateInfo)));
+      if (subChildren.length > 0) {
+        copied.children = subChildren;
+      }
     }
   }
 
@@ -266,12 +269,15 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
         }
       }
 
-      return {
+      const colBlock = {
         object: 'block',
         type: 'column',
         column: {},
-        children: copiedChildren,
       };
+      if (copiedChildren.length > 0) {
+        colBlock.children = copiedChildren;
+      }
+      return colBlock;
     })
   );
 

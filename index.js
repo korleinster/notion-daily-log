@@ -213,7 +213,7 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
       if (converted) convertedChildren.push(converted);
     }
     if (convertedChildren.length > 0) {
-      convertedColumns.push({ object: 'block', type: 'column', column: {}, children: convertedChildren });
+      convertedColumns.push({ object: 'block', type: 'column', column: { children: convertedChildren } });
     }
   }
 
@@ -221,12 +221,14 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
     throw new Error();
   }
 
-  console.log('convertedColumns count:', convertedColumns.length);
-  console.log('convertedColumns JSON:', JSON.stringify(convertedColumns, null, 2).substring(0, 500));
-
+  // column_list.children 안에 column들을 넣어야 함 (블록 바깥의 children이 아니라)
   await notion.blocks.children.append({
     block_id: monthPageId,
-    children: [{ object: 'block', type: 'column_list', column_list: {}, children: convertedColumns }],
+    children: [{
+      object: 'block',
+      type: 'column_list',
+      column_list: { children: convertedColumns },
+    }],
   });
 
   return addedItems;

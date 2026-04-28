@@ -1,4 +1,6 @@
 const { Client } = require('@notionhq/client');
+const { DAVClient } = require('tsdav');
+const ICAL = require('ical.js');
 const https = require('https');
 
 const notion = new Client({ auth: process.env.NOTION_TOKEN });
@@ -63,6 +65,156 @@ function getKSTDate() {
   return { year, month, day, dayName };
 }
 
+// ──────────────────────────────────────────────
+// Apple Calendar (iCloud CalDAV)
+// ──────────────────────────────────────────────
+async function getCalendarEvents() {
+  if (!process.env.APPLE_ID || !process.env.APPLE_APP_PASSWORD) {
+    console.warn('⚠️ APPLE_ID 또는 APPLE_APP_PASSWORD 없음. 캘린더 건너뜀.');
+    return null;
+  }
+  try {
+    const client = new DAVClient({
+      serverUrl: 'https://caldav.icloud.com',
+      credentials: { username: process.env.APPLE_ID, password: process.env.APPLE_APP_PASSWORD },
+      authMethod: 'Basic',
+      defaultAccountType: 'caldav',
+    });
+    await client.login();
+    const calendars = await client.fetchCalendars();
+
+    const now = new Date();
+    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+    const todayStart = new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()));
+    const rangeEnd = new Date(todayStart.getTime() + 4 * 24 * 60 * 60 * 1000);
+
+    const events = [];
+    for (const calendar of calendars) {
+      let calObjects;
+      try {
+        calObjects = await client.fetchCalendarObjects({
+          calendar,
+          timeRange: { start: todayStart.toISOString(), end: rangeEnd.toISOString() },
+        });
+      } catch (e) { continue; }
+
+      for (const obj of calObjects) {
+        if (!obj.data) continue;
+        try {
+          const jcal = ICAL.parse(obj.data);
+          const comp = new ICAL.Component(jcal);
+          for (const vevent of comp.getAllSubcomponents('vevent')) {
+            const event = new ICAL.Event(vevent);
+            if (event.isRecurring()) {
+              const iter = event.iterator();
+              let next;
+              while ((next = iter.next())) {
+                const startJS = next.toJSDate();
+                if (startJS >= rangeEnd) break;
+                if (startJS >= todayStart) {
+                  events.push({
+                    summary: event.summary || '(제목 없음)',
+                    start: startJS,
+                    end: new Date(startJS.getTime() + event.duration.toSeconds() * 1000),
+                    allDay: next.isDate,
+                  });
+                }
+              }
+            } else {
+              const startJS = event.startDate.toJSDate();
+              const endJS = event.endDate.toJSDate();
+              if (startJS < rangeEnd && endJS > todayStart) {
+                events.push({
+                  summary: event.summary || '(제목 없음)',
+                  start: startJS,
+                  end: endJS,
+                  allDay: event.startDate.isDate,
+                });
+              }
+            }
+          }
+        } catch (e) { /* 파싱 오류 무시 */ }
+      }
+    }
+
+    events.sort((a, b) => {
+      if (a.allDay && !b.allDay) return -1;
+      if (!a.allDay && b.allDay) return 1;
+      return a.start - b.start;
+    });
+    return events;
+  } catch (e) {
+    console.error('캘린더 로드 오류:', e.message);
+    return null;
+  }
+}
+
+function formatCalendarSection(events) {
+  if (!events) return '';
+
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+  const todayKey = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`;
+
+  const grouped = {};
+  for (const ev of events) {
+    const evKST = ev.allDay ? ev.start : new Date(ev.start.getTime() + 9 * 60 * 60 * 1000);
+    const key = `${evKST.getUTCFullYear()}-${String(evKST.getUTCMonth()+1).padStart(2,'0')}-${String(evKST.getUTCDate()).padStart(2,'0')}`;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push({ ev, evKST });
+  }
+
+  const todayEvents = grouped[todayKey] || [];
+  const upcomingKeys = Object.keys(grouped).sort().filter(k => k !== todayKey);
+
+  const lines = [];
+
+  // 오늘 일정
+  lines.push('\n\n<b>📆 오늘 일정</b>');
+  if (todayEvents.length === 0) {
+    lines.push('일정 없음');
+  } else {
+    for (const { ev, evKST } of todayEvents) {
+      if (ev.allDay) {
+        lines.push(`• ${ev.summary} 🔵 하루종일`);
+      } else {
+        const hh = String(evKST.getUTCHours()).padStart(2,'0');
+        const mm = String(evKST.getUTCMinutes()).padStart(2,'0');
+        const endKST = new Date(ev.end.getTime() + 9 * 60 * 60 * 1000);
+        const ehh = String(endKST.getUTCHours()).padStart(2,'0');
+        const emm = String(endKST.getUTCMinutes()).padStart(2,'0');
+        lines.push(`• ${hh}:${mm}–${ehh}:${emm} ${ev.summary}`);
+      }
+    }
+  }
+
+  // 다가오는 일정
+  lines.push('\n<b>📅 다가오는 일정</b>');
+  if (upcomingKeys.length === 0) {
+    lines.push('일정 없음');
+  } else {
+    for (const dateKey of upcomingKeys) {
+      const [y, m, d] = dateKey.split('-').map(Number);
+      const dow = dayNames[new Date(Date.UTC(y, m-1, d)).getUTCDay()];
+      for (const { ev, evKST } of grouped[dateKey]) {
+        if (ev.allDay) {
+          lines.push(`• ${m}/${d} (${dow}) ${ev.summary} 🔵 하루종일`);
+        } else {
+          const hh = String(evKST.getUTCHours()).padStart(2,'0');
+          const mm2 = String(evKST.getUTCMinutes()).padStart(2,'0');
+          lines.push(`• ${m}/${d} (${dow}) ${hh}:${mm2} ${ev.summary}`);
+        }
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ──────────────────────────────────────────────
+// Notion 함수들
+// ──────────────────────────────────────────────
 async function getChildPages(pageId) {
   const children = [];
   let cursor = undefined;
@@ -106,7 +258,6 @@ function extractText(richText) {
   return richText?.map(t => t.plain_text).join('') || '';
 }
 
-// 월 페이지에서 가장 최근 일 페이지 찾기 (YYYY_MM_DD 형식)
 async function findLatestDayPage(monthPageId) {
   const children = await getChildPages(monthPageId);
   const dayPages = children.filter(p => /^\d{4}_\d{2}_\d{2}/.test(p.title));
@@ -115,22 +266,17 @@ async function findLatestDayPage(monthPageId) {
   return dayPages[0];
 }
 
-// 이전 달/해의 가장 최근 일 페이지 찾기
 async function findPrevMonthLatestDayPage(year, month) {
   const prevMonth = month === '01'
     ? { year: String(Number(year) - 1), month: '12' }
     : { year, month: String(Number(month) - 1).padStart(2, '0') };
-
   const prevYearPage = await findPage(ROOT_PAGE_ID, `${prevMonth.year}년`);
   if (!prevYearPage) return null;
-
   const prevMonthPage = await findPage(prevYearPage.id, `${prevMonth.year}_${prevMonth.month}`);
   if (!prevMonthPage) return null;
-
   return await findLatestDayPage(prevMonthPage.id);
 }
 
-// 페이지에서 첫 번째 column_list ID 반환
 async function findFirstColumnList(pageId) {
   const blocks = await getAllBlocks(pageId);
   for (const block of blocks) {
@@ -166,7 +312,24 @@ function removeNulls(obj) {
 
 const UNSUPPORTED_TYPES = ['unsupported', 'child_page', 'child_database'];
 
-function convertBlockFlat(block, dateInfo, addedItems) {
+// todo 항목을 소스에서 DFS 순서로 수집 (Notion append와 별개)
+async function collectTodos(sourceBlocks, addedItems, depth = 0) {
+  for (const block of sourceBlocks) {
+    if (isCheckedTodo(block)) continue;
+    if (block.type === 'to_do') {
+      const text = extractText(block.to_do.rich_text);
+      if (text) {
+        addedItems.push('  '.repeat(depth) + '• ' + text);
+      }
+    }
+    if (block.has_children) {
+      const subBlocks = await getAllBlocks(block.id);
+      await collectTodos(subBlocks, addedItems, depth + 1);
+    }
+  }
+}
+
+function convertBlockFlat(block, dateInfo) {
   if (isCheckedTodo(block)) return null;
   const type = block.type;
   if (UNSUPPORTED_TYPES.includes(type)) return null;
@@ -180,24 +343,18 @@ function convertBlockFlat(block, dateInfo, addedItems) {
 
   if (type === 'to_do') {
     blockData.checked = false;
-    const text = extractText(block.to_do.rich_text);
-    if (text) {
-      const depth = addedItems._depth || 0;
-      const indent = '  '.repeat(depth);
-      addedItems.push(`${indent}• ${text}`);
-    }
   }
 
   delete blockData.children;
   return { object: 'block', type, [type]: blockData };
 }
 
-async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo, addedItems) {
+async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo) {
   const flatBlocks = [];
   const sourceBlocksFiltered = [];
 
   for (const src of sourceBlocks) {
-    const converted = convertBlockFlat(src, dateInfo, addedItems);
+    const converted = convertBlockFlat(src, dateInfo);
     if (converted) {
       flatBlocks.push(converted);
       sourceBlocksFiltered.push(src);
@@ -214,15 +371,12 @@ async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo, addedItem
     if (srcBlock.has_children) {
       const subBlocks = await getAllBlocks(srcBlock.id);
       if (subBlocks.length > 0) {
-        addedItems._depth = (addedItems._depth || 0) + 1;
-        await appendBlocksRecursive(newBlock.id, subBlocks, dateInfo, addedItems);
-        addedItems._depth = Math.max(0, (addedItems._depth || 1) - 1);
+        await appendBlocksRecursive(newBlock.id, subBlocks, dateInfo);
       }
     }
   }
 }
 
-// column_list를 pageId 하위에 생성
 async function appendColumnList(pageId, sourceColumnListId, dateInfo, addedItems) {
   const sourceColumns = await getAllBlocks(sourceColumnListId);
   const columnsForCreation = [];
@@ -247,44 +401,100 @@ async function appendColumnList(pageId, sourceColumnListId, dateInfo, addedItems
   for (let i = 0; i < newColumns.length; i++) {
     const newCol = newColumns[i];
     const srcCol = sourceColumnsFiltered[i];
-
     const placeholders = await getAllBlocks(newCol.id);
     for (const p of placeholders) {
       try { await notion.blocks.delete({ block_id: p.id }); } catch (e) {}
     }
-
     const subBlocks = await getAllBlocks(srcCol.id);
     if (subBlocks.length > 0) {
-      await appendBlocksRecursive(newCol.id, subBlocks, dateInfo, addedItems);
+      // Notion에 블록 복사
+      await appendBlocksRecursive(newCol.id, subBlocks, dateInfo);
+      // todo 항목은 DFS 순서로 별도 수집 (첫 번째 컬럼만)
+      if (i === 0) {
+        await collectTodos(subBlocks, addedItems);
+      }
     }
   }
 }
 
+// ──────────────────────────────────────────────
+// Main
+// ──────────────────────────────────────────────
 async function main() {
   const dateInfo = getKSTDate();
   const { year, month, day, dayName } = dateInfo;
   const todayStr = `${year}년 ${month}월 ${day}일`;
   const dayPageTitle = `${year}_${month}_${day} (${dayName})`;
+  const isWeekend = dayName === '토' || dayName === '일';
 
   console.log(`📅 오늘 날짜 (KST): ${todayStr} ${dayName}요일`);
 
+  const calendarPromise = getCalendarEvents();
+
   try {
-    // 1. 년도 페이지
+    const [weather, calendarEvents] = await Promise.all([
+      getWeather(),
+      calendarPromise,
+    ]);
+    const calendarText = formatCalendarSection(calendarEvents);
+
     const yearPageId = await findOrCreatePage(ROOT_PAGE_ID, `${year}년`);
-
-    // 2. 월 페이지
     const monthPageId = await findOrCreatePage(yearPageId, `${year}_${month}`);
-
-    // 3. 오늘 일 페이지 중복 확인
     const existingDayPage = await findPage(monthPageId, dayPageTitle);
-    if (existingDayPage) {
-      console.log(`⚠️ 오늘 날짜 페이지가 이미 존재합니다.`);
-      await sendTelegram(`⚠️ 오늘(${todayStr}) 일지가 이미 작성되어 있어요!`);
+
+    if (isWeekend) {
+      if (existingDayPage) {
+        // 주말 중복: 마커 페이지가 이미 있음
+        console.log('🏖 주말 메시지 이미 전송됨. 재전송합니다.');
+        await sendTelegram(
+`🌅 좋은 아침이에요! 즐거운 주말 보내세요 😊
+
+📅 <b>${todayStr} ${dayName}요일</b>
+${weather}${calendarText}
+
+이미 보내드렸는데 다시 한 번 보내드렸어요~ 😄`
+        );
+      } else {
+        // 주말 최초 전송: 마커 페이지 생성
+        console.log('🏖 주말이에요. 일지 생성 없이 메시지만 전송합니다.');
+        await findOrCreatePage(monthPageId, dayPageTitle);
+        await sendTelegram(
+`🌅 좋은 아침이에요! 즐거운 주말 보내세요 😊
+
+📅 <b>${todayStr} ${dayName}요일</b>
+${weather}${calendarText}
+
+푹 쉬고 충전하는 하루 되세요! 🌿`
+        );
+      }
       return;
     }
 
-    // 4. 소스 일 페이지 찾기
-    // 현재 달의 가장 최근 일 페이지 → 없으면 이전 달의 가장 최근 일 페이지
+    // 평일 중복: 기존 페이지에서 todo 읽어서 포함 전송
+    if (existingDayPage) {
+      console.log('⚠️ 오늘 날짜 페이지가 이미 존재합니다. todo 포함 재전송합니다.');
+      const addedItems = [];
+      const existingColumnListId = await findFirstColumnList(existingDayPage.id);
+      if (existingColumnListId) {
+        const existingColumns = await getAllBlocks(existingColumnListId);
+        if (existingColumns.length > 0) {
+          const firstColBlocks = await getAllBlocks(existingColumns[0].id);
+          await collectTodos(firstColBlocks, addedItems);
+        }
+      }
+      const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';
+      await sendTelegram(
+`🌅 좋은 아침이에요! 오늘도 화이팅입니다 😊
+
+📅 <b>${todayStr} ${dayName}요일</b>
+${weather}${calendarText}${itemsText}
+
+이미 일지가 있어서 다시 한 번 보내드렸어요~ 📋`
+      );
+      return;
+    }
+
+    // 평일 최초: 일지 생성
     let sourceDayPage = await findLatestDayPage(monthPageId);
     if (!sourceDayPage) {
       console.log(`🔍 현재 달에 일 페이지 없음. 이전 달에서 찾는 중...`);
@@ -292,29 +502,23 @@ async function main() {
     }
 
     if (!sourceDayPage) throw new Error('복사할 이전 일지를 찾을 수 없습니다. 첫 일지를 수동으로 작성해주세요.');
-
     console.log(`📋 소스 페이지: ${sourceDayPage.title}`);
 
-    // 5. 소스 일 페이지에서 column_list 찾기
     const sourceColumnListId = await findFirstColumnList(sourceDayPage.id);
     if (!sourceColumnListId) throw new Error(`소스 페이지(${sourceDayPage.title})에서 내용을 찾을 수 없습니다.`);
 
-    // 6. 오늘 일 페이지 생성 후 내용 복사
     const dayPageId = await findOrCreatePage(monthPageId, dayPageTitle);
     const addedItems = [];
     await appendColumnList(dayPageId, sourceColumnListId, dateInfo, addedItems);
     console.log(`✅ 오늘(${dayPageTitle}) 페이지 생성 완료`);
 
-    // 7. 텔레그램 알림
-    const weather = await getWeather();
     const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';
 
     await sendTelegram(
 `🌅 좋은 아침이에요! 오늘도 화이팅입니다 😊
 
 📅 <b>${todayStr} ${dayName}요일</b>
-🏙 성남시 현재 날씨
-${weather}${itemsText}
+${weather}${calendarText}${itemsText}
 
 오늘 하루도 잘 부탁드려요! 💪`
     );

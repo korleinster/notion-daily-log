@@ -106,26 +106,18 @@ function extractText(richText) {
   return richText?.map(t => t.plain_text).join('') || '';
 }
 
-async function todayAlreadyExists(monthPageId, todayStr) {
-  const blocks = await getAllBlocks(monthPageId);
-  for (const block of blocks) {
-    if (block.type === 'column_list') {
-      const columns = await getAllBlocks(block.id);
-      if (!columns.length) continue;
-      const firstColumnChildren = await getAllBlocks(columns[0].id);
-      for (const child of firstColumnChildren) {
-        if (child.type === 'bulleted_list_item') {
-          const text = extractText(child.bulleted_list_item.rich_text);
-          if (text.includes(todayStr)) return true;
-        }
-      }
-    }
-  }
-  return false;
+// 월 페이지의 일 페이지 중 가장 최근 것 찾기 (제목 형식: YYYY_MM_DD)
+async function findLatestDayPage(monthPageId) {
+  const children = await getChildPages(monthPageId);
+  const dayPages = children.filter(p => /^\d{4}_\d{2}_\d{2}/.test(p.title));
+  if (dayPages.length === 0) return null;
+  // 제목 기준으로 내림차순 정렬 후 첫 번째
+  dayPages.sort((a, b) => b.title.localeCompare(a.title));
+  return dayPages[0];
 }
 
-// 페이지에서 가장 첫 번째 column_list 블록 ID 반환 (최신 날짜)
-async function findLastColumnList(pageId) {
+// 페이지에서 첫 번째 column_list 블록 ID 반환 (최신 내용)
+async function findFirstColumnList(pageId) {
   const blocks = await getAllBlocks(pageId);
   for (const block of blocks) {
     if (block.type === 'column_list') return block.id;
@@ -216,8 +208,8 @@ async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo, addedItem
   }
 }
 
-// column_list를 parentId 하위에 생성 (날짜 교체 + 체크박스 초기화)
-async function appendColumnList(parentId, sourceColumnListId, dateInfo, addedItems) {
+// column_list를 pageId 하위에 생성
+async function appendColumnList(pageId, sourceColumnListId, dateInfo, addedItems) {
   const sourceColumns = await getAllBlocks(sourceColumnListId);
   const columnsForCreation = [];
   const sourceColumnsFiltered = [];
@@ -231,7 +223,7 @@ async function appendColumnList(parentId, sourceColumnListId, dateInfo, addedIte
   if (columnsForCreation.length < 2) throw new Error('column이 2개 이상 필요합니다.');
 
   const res = await notion.blocks.children.append({
-    block_id: parentId,
+    block_id: pageId,
     children: [{ object: 'block', type: 'column_list', column_list: { children: columnsForCreation } }],
   });
 
@@ -254,8 +246,8 @@ async function appendColumnList(parentId, sourceColumnListId, dateInfo, addedIte
   }
 }
 
-// 이전 달의 마지막 column_list ID 찾기
-async function findPrevMonthLastColumnList(year, month) {
+// 이전 달/해의 마지막 일 페이지에서 column_list 찾기
+async function findPrevSourceColumnList(year, month) {
   const prevMonth = month === '01'
     ? { year: String(Number(year) - 1), month: '12' }
     : { year, month: String(Number(month) - 1).padStart(2, '0') };
@@ -266,56 +258,67 @@ async function findPrevMonthLastColumnList(year, month) {
   const prevMonthPage = await findPage(prevYearPage.id, `${prevMonth.year}_${prevMonth.month}`);
   if (!prevMonthPage) return null;
 
-  return await findLastColumnList(prevMonthPage.id);
+  // 이전 달의 가장 최근 일 페이지 찾기
+  const latestDayPage = await findLatestDayPage(prevMonthPage.id);
+  if (latestDayPage) {
+    const columnListId = await findFirstColumnList(latestDayPage.id);
+    if (columnListId) return columnListId;
+  }
+
+  // 일 페이지가 없으면 월 페이지에서 직접 찾기 (구버전 호환)
+  return await findFirstColumnList(prevMonthPage.id);
 }
 
 async function main() {
   const dateInfo = getKSTDate();
   const { year, month, day, dayName } = dateInfo;
   const todayStr = `${year}년 ${month}월 ${day}일`;
+  const dayPageTitle = `${year}_${month}_${day} (${dayName})`;
 
   console.log(`📅 오늘 날짜 (KST): ${todayStr} ${dayName}요일`);
 
   try {
-    // 1. 년도 페이지 찾기 또는 생성
+    // 1. 년도 페이지
     const { id: yearPageId } = await findOrCreatePage(ROOT_PAGE_ID, `${year}년`);
 
-    // 2. 월 페이지 찾기 또는 생성
-    const { id: monthPageId, created: monthCreated } = await findOrCreatePage(yearPageId, `${year}_${month}`);
+    // 2. 월 페이지
+    const { id: monthPageId } = await findOrCreatePage(yearPageId, `${year}_${month}`);
 
-    // 3. 오늘 섹션 중복 확인
-    const alreadyExists = await todayAlreadyExists(monthPageId, todayStr);
-    if (alreadyExists) {
-      console.log(`⚠️ 오늘 날짜 섹션이 이미 존재합니다.`);
+    // 3. 오늘 일 페이지 중복 확인
+    const existingDayPage = await findPage(monthPageId, dayPageTitle);
+    if (existingDayPage) {
+      console.log(`⚠️ 오늘 날짜 페이지가 이미 존재합니다.`);
       await sendTelegram(`⚠️ 오늘(${todayStr}) 일지가 이미 작성되어 있어요!`);
       return;
     }
 
-    // 4. 소스 column_list 찾기
+    // 4. 소스 column_list 찾기 (이전 일 페이지 → 이전 달)
     let sourceColumnListId = null;
 
-    if (monthCreated) {
-      // 새 달: 이전 달 마지막 내용 가져오기
-      console.log(`🆕 새 달 페이지 생성됨. 이전 달에서 소스 찾는 중...`);
-      sourceColumnListId = await findPrevMonthLastColumnList(year, month);
-      if (!sourceColumnListId) throw new Error('이전 달 데이터를 찾을 수 없습니다. 수동으로 첫 내용을 작성해주세요.');
-    } else {
-      // 기존 달: 현재 월 페이지의 마지막 column_list
-      sourceColumnListId = await findLastColumnList(monthPageId);
-      if (!sourceColumnListId) {
-        // 현재 달에 내용이 없으면 이전 달에서 가져오기
-        console.log(`🔍 현재 월 페이지에 내용 없음. 이전 달에서 찾는 중...`);
-        sourceColumnListId = await findPrevMonthLastColumnList(year, month);
-        if (!sourceColumnListId) throw new Error('복사할 소스 섹션을 찾을 수 없습니다.');
-      }
+    // 현재 달의 가장 최근 일 페이지에서 찾기
+    const latestDayPage = await findLatestDayPage(monthPageId);
+    if (latestDayPage) {
+      sourceColumnListId = await findFirstColumnList(latestDayPage.id);
+      console.log(`📋 소스: ${latestDayPage.title}`);
     }
 
-    // 5. 오늘 섹션 맨 아래에 추가
-    const addedItems = [];
-    await appendColumnList(monthPageId, sourceColumnListId, dateInfo, addedItems);
-    console.log(`✅ 오늘(${todayStr}) 섹션 추가 완료`);
+    // 현재 달에 일 페이지가 없으면 이전 달에서 찾기
+    if (!sourceColumnListId) {
+      console.log(`🔍 현재 달에 일 페이지 없음. 이전 달에서 찾는 중...`);
+      sourceColumnListId = await findPrevSourceColumnList(year, month);
+    }
 
-    // 6. 텔레그램 성공 알림
+    if (!sourceColumnListId) throw new Error('복사할 소스 섹션을 찾을 수 없습니다. 첫 일지를 수동으로 작성해주세요.');
+
+    // 5. 오늘 일 페이지 생성
+    const { id: dayPageId } = await findOrCreatePage(monthPageId, dayPageTitle);
+
+    // 6. 내용 복사
+    const addedItems = [];
+    await appendColumnList(dayPageId, sourceColumnListId, dateInfo, addedItems);
+    console.log(`✅ 오늘(${dayPageTitle}) 페이지 생성 완료`);
+
+    // 7. 텔레그램 알림
     const weather = await getWeather();
     const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';
 

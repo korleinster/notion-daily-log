@@ -6,18 +6,12 @@ const ROOT_PAGE_ID = process.env.DAILY_LOG_PAGE_ID;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// 성남시 좌표
 const LAT = 37.4449;
 const LON = 127.1388;
 
-// 텔레그램 메시지 전송
 async function sendTelegram(message) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      chat_id: TELEGRAM_CHAT_ID,
-      text: message,
-      parse_mode: 'HTML',
-    });
+    const body = JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' });
     const req = https.request({
       hostname: 'api.telegram.org',
       path: `/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
@@ -34,7 +28,6 @@ async function sendTelegram(message) {
   });
 }
 
-// HTTP GET 요청
 async function httpGet(hostname, path) {
   return new Promise((resolve, reject) => {
     const req = https.request({ hostname, path, method: 'GET' }, res => {
@@ -47,52 +40,18 @@ async function httpGet(hostname, path) {
   });
 }
 
-// 날씨 정보 가져오기 (Open-Meteo)
 async function getWeather() {
   try {
-    const data = await httpGet(
-      'api.open-meteo.com',
-      `/v1/forecast?latitude=${LAT}&longitude=${LON}&current=temperature_2m,weathercode,windspeed_10m&timezone=Asia/Seoul`
-    );
+    const data = await httpGet('api.open-meteo.com', `/v1/forecast?latitude=${LAT}&longitude=${LON}&current=temperature_2m,weathercode,windspeed_10m&timezone=Asia/Seoul`);
     const { temperature_2m, weathercode, windspeed_10m } = data.current;
-
-    const weatherEmoji = getWeatherEmoji(weathercode);
-    const desc = getWeatherDesc(weathercode);
-
-    return `${weatherEmoji} ${desc} / 기온 ${temperature_2m}°C / 바람 ${windspeed_10m}km/h`;
+    const emoji = weathercode === 0 ? '☀️' : weathercode <= 2 ? '🌤' : weathercode === 3 ? '☁️' : weathercode <= 49 ? '🌫' : weathercode <= 59 ? '🌦' : weathercode <= 69 ? '🌧' : weathercode <= 79 ? '❄️' : weathercode <= 84 ? '🌧' : '⛈';
+    const desc = weathercode === 0 ? '맑음' : weathercode === 1 ? '대체로 맑음' : weathercode === 2 ? '구름 조금' : weathercode === 3 ? '흐림' : weathercode <= 49 ? '안개' : weathercode <= 59 ? '이슬비' : weathercode <= 69 ? '비' : weathercode <= 79 ? '눈' : weathercode <= 84 ? '소나기' : '뇌우';
+    return `${emoji} ${desc} / 기온 ${temperature_2m}°C / 바람 ${windspeed_10m}km/h`;
   } catch (e) {
     return '날씨 정보를 가져오지 못했어요 😢';
   }
 }
 
-function getWeatherEmoji(code) {
-  if (code === 0) return '☀️';
-  if (code <= 2) return '🌤';
-  if (code === 3) return '☁️';
-  if (code <= 49) return '🌫';
-  if (code <= 59) return '🌦';
-  if (code <= 69) return '🌧';
-  if (code <= 79) return '❄️';
-  if (code <= 84) return '🌧';
-  if (code <= 99) return '⛈';
-  return '🌈';
-}
-
-function getWeatherDesc(code) {
-  if (code === 0) return '맑음';
-  if (code === 1) return '대체로 맑음';
-  if (code === 2) return '구름 조금';
-  if (code === 3) return '흐림';
-  if (code <= 49) return '안개';
-  if (code <= 59) return '이슬비';
-  if (code <= 69) return '비';
-  if (code <= 79) return '눈';
-  if (code <= 84) return '소나기';
-  if (code <= 99) return '뇌우';
-  return '알 수 없음';
-}
-
-// KST 기준 오늘 날짜 정보
 function getKSTDate() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -104,20 +63,13 @@ function getKSTDate() {
   return { year, month, day, dayName };
 }
 
-// 하위 페이지 목록 가져오기
 async function getChildPages(pageId) {
   const children = [];
   let cursor = undefined;
   while (true) {
-    const res = await notion.blocks.children.list({
-      block_id: pageId,
-      start_cursor: cursor,
-      page_size: 100,
-    });
+    const res = await notion.blocks.children.list({ block_id: pageId, start_cursor: cursor, page_size: 100 });
     for (const block of res.results) {
-      if (block.type === 'child_page') {
-        children.push({ id: block.id, title: block.child_page.title });
-      }
+      if (block.type === 'child_page') children.push({ id: block.id, title: block.child_page.title });
     }
     if (!res.has_more) break;
     cursor = res.next_cursor;
@@ -125,34 +77,20 @@ async function getChildPages(pageId) {
   return children;
 }
 
-// 페이지 찾기 또는 생성
 async function findOrCreatePage(parentId, title) {
   const children = await getChildPages(parentId);
   const found = children.find(p => p.title === title);
-  if (found) {
-    console.log(`✅ 페이지 찾음: ${title}`);
-    return found.id;
-  }
+  if (found) { console.log(`✅ 페이지 찾음: ${title}`); return found.id; }
   console.log(`🆕 페이지 생성: ${title}`);
-  const res = await notion.pages.create({
-    parent: { page_id: parentId },
-    properties: {
-      title: { title: [{ text: { content: title } }] },
-    },
-  });
+  const res = await notion.pages.create({ parent: { page_id: parentId }, properties: { title: { title: [{ text: { content: title } }] } } });
   return res.id;
 }
 
-// 페이지 전체 블록 가져오기
 async function getAllBlocks(pageId) {
   const blocks = [];
   let cursor = undefined;
   while (true) {
-    const res = await notion.blocks.children.list({
-      block_id: pageId,
-      start_cursor: cursor,
-      page_size: 100,
-    });
+    const res = await notion.blocks.children.list({ block_id: pageId, start_cursor: cursor, page_size: 100 });
     blocks.push(...res.results);
     if (!res.has_more) break;
     cursor = res.next_cursor;
@@ -160,12 +98,10 @@ async function getAllBlocks(pageId) {
   return blocks;
 }
 
-// 블록 내 텍스트 추출
 function extractText(richText) {
   return richText?.map(t => t.plain_text).join('') || '';
 }
 
-// columns 블록에서 날짜 텍스트 찾기
 async function findDateInColumnList(blockId) {
   const columns = await getAllBlocks(blockId);
   if (!columns.length) return null;
@@ -179,7 +115,6 @@ async function findDateInColumnList(blockId) {
   return null;
 }
 
-// 오늘 날짜 섹션이 이미 있는지 확인
 async function todayAlreadyExists(monthPageId, todayStr) {
   const blocks = await getAllBlocks(monthPageId);
   for (const block of blocks) {
@@ -191,7 +126,6 @@ async function todayAlreadyExists(monthPageId, todayStr) {
   return false;
 }
 
-// 가장 최근 column_list 블록 ID 찾기
 async function findLatestColumnList(monthPageId) {
   const blocks = await getAllBlocks(monthPageId);
   for (const block of blocks) {
@@ -200,105 +134,75 @@ async function findLatestColumnList(monthPageId) {
   return null;
 }
 
-// 날짜 rich_text 교체
 function replaceDateInRichText(richText, { year, month, day, dayName }) {
   const newDateStr = `${year}년 ${month}월 ${day}일 ${dayName}요일`;
   return richText.map(rt => {
-    const updated = { ...rt };
+    const updated = JSON.parse(JSON.stringify(rt));
     if (updated.plain_text && /\d{4}년 \d{2}월 \d{2}일/.test(updated.plain_text)) {
       if (updated.text) {
-        updated.text = {
-          ...updated.text,
-          content: updated.text.content.replace(/\d{4}년 \d{2}월 \d{2}일 .요일/, newDateStr),
-        };
+        updated.text.content = updated.text.content.replace(/\d{4}년 \d{2}월 \d{2}일 .요일/, newDateStr);
       }
     }
     return updated;
   });
 }
 
-// 체크된 to_do 블록인지 확인
 function isCheckedTodo(block) {
   return block.type === 'to_do' && block.to_do?.checked === true;
 }
 
-// 블록 복사 (체크된 항목 제거 + 날짜 교체 + 체크박스 초기화)
-async function copyBlockWithReset(block, dateInfo) {
-  const { id, ...rest } = block;
-  const copied = JSON.parse(JSON.stringify(rest));
+// 블록을 Notion API 형식으로 변환 (id 제거, children 재귀 처리)
+async function convertBlock(block, dateInfo, addedItems) {
+  // 체크된 todo는 건너뜀
+  if (isCheckedTodo(block)) return null;
 
-  if (copied.type === 'to_do') {
-    copied.to_do.checked = false;
+  const type = block.type;
+  const blockData = JSON.parse(JSON.stringify(block[type]));
+
+  // rich_text 날짜 교체
+  if (blockData.rich_text) {
+    blockData.rich_text = replaceDateInRichText(blockData.rich_text, dateInfo);
   }
 
-  const richTextField = copied[copied.type]?.rich_text;
-  if (richTextField) {
-    copied[copied.type].rich_text = replaceDateInRichText(richTextField, dateInfo);
+  // 체크박스 초기화
+  if (type === 'to_do') {
+    blockData.checked = false;
+    const text = extractText(block.to_do.rich_text);
+    if (text) addedItems.push(`• ${text}`);
   }
 
-  if (['column_list', 'column', 'bulleted_list_item', 'numbered_list_item',
-       'to_do', 'toggle', 'quote', 'callout'].includes(copied.type)) {
-    const children = await getAllBlocks(id);
-    const filteredChildren = children.filter(child => !isCheckedTodo(child));
-    if (filteredChildren.length > 0) {
-      const subChildren = await Promise.all(filteredChildren.map(b => copyBlockWithReset(b, dateInfo)));
-      if (subChildren.length > 0) {
-        copied.children = subChildren;
-      }
+  // 하위 블록 재귀 처리
+  let children = [];
+  if (['column_list', 'column', 'bulleted_list_item', 'numbered_list_item', 'to_do', 'toggle', 'quote', 'callout'].includes(type)) {
+    const subBlocks = await getAllBlocks(block.id);
+    for (const sub of subBlocks) {
+      const converted = await convertBlock(sub, dateInfo, addedItems);
+      if (converted) children.push(converted);
     }
   }
 
-  return copied;
+  const result = { object: 'block', type, [type]: blockData };
+  if (children.length > 0) result.children = children;
+
+  return result;
 }
 
-// 오늘 섹션 삽입
 async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
-  const columns = await getAllBlocks(sourceColumnListId);
   const addedItems = [];
+  const converted = await convertBlock({ id: sourceColumnListId, type: 'column_list', column_list: {} }, dateInfo, addedItems);
 
-  const columnBlocks = await Promise.all(
-    columns.map(async col => {
-      const colChildren = await getAllBlocks(col.id);
-      const filteredChildren = colChildren.filter(child => !isCheckedTodo(child));
-      const copiedChildren = await Promise.all(filteredChildren.map(b => copyBlockWithReset(b, dateInfo)));
-
-      for (const child of filteredChildren) {
-        if (child.type === 'to_do') {
-          const text = extractText(child.to_do.rich_text);
-          if (text) addedItems.push(`• ${text}`);
-        }
-      }
-
-      const colBlock = {
-        object: 'block',
-        type: 'column',
-        column: {},
-      };
-      if (copiedChildren.length > 0) {
-        colBlock.children = copiedChildren;
-      }
-      return colBlock;
-    })
-  );
-
-  const columnListBlock = {
-    object: 'block',
-    type: 'column_list',
-    column_list: {},
-  };
-  if (columnBlocks.length > 0) {
-    columnListBlock.children = columnBlocks;
+  if (!converted || !converted.children || converted.children.length === 0) {
+    throw new Error('변환된 블록이 비어있습니다.');
   }
 
   await notion.blocks.children.append({
     block_id: monthPageId,
-    children: [columnListBlock],
+    children: [converted],
   });
 
   return addedItems;
 }
 
-// 메인 실행
 async function main() {
   const dateInfo = getKSTDate();
   const { year, month, day, dayName } = dateInfo;
@@ -323,29 +227,22 @@ async function main() {
       const prevMonth = month === '01'
         ? { year: String(Number(year) - 1), month: '12' }
         : { year, month: String(Number(month) - 1).padStart(2, '0') };
-
       const prevYearChildren = await getChildPages(ROOT_PAGE_ID);
       const prevYearPage = prevYearChildren.find(p => p.title === `${prevMonth.year}년`);
       if (prevYearPage) {
         const prevMonthChildren = await getChildPages(prevYearPage.id);
         const prevMonthPage = prevMonthChildren.find(p => p.title === `${prevMonth.year}_${prevMonth.month}`);
-        if (prevMonthPage) {
-          sourceColumnListId = await findLatestColumnList(prevMonthPage.id);
-        }
+        if (prevMonthPage) sourceColumnListId = await findLatestColumnList(prevMonthPage.id);
       }
     }
 
-    if (!sourceColumnListId) {
-      throw new Error('복사할 소스 섹션을 찾을 수 없습니다.');
-    }
+    if (!sourceColumnListId) throw new Error('복사할 소스 섹션을 찾을 수 없습니다.');
 
     const addedItems = await insertTodaySection(monthPageId, sourceColumnListId, dateInfo);
     console.log(`✅ 오늘(${todayStr}) 섹션 추가 완료`);
 
     const weather = await getWeather();
-    const itemsText = addedItems.length > 0
-      ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}`
-      : '';
+    const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';
 
     await sendTelegram(
 `🌅 좋은 아침이에요! 오늘도 화이팅입니다 😊

@@ -281,16 +281,18 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
     })
   );
 
+  const columnListBlock = {
+    object: 'block',
+    type: 'column_list',
+    column_list: {},
+  };
+  if (columnBlocks.length > 0) {
+    columnListBlock.children = columnBlocks;
+  }
+
   await notion.blocks.children.append({
     block_id: monthPageId,
-    children: [
-      {
-        object: 'block',
-        type: 'column_list',
-        column_list: {},
-        children: columnBlocks,
-      },
-    ],
+    children: [columnListBlock],
   });
 
   return addedItems;

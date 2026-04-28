@@ -6,6 +6,10 @@ const ROOT_PAGE_ID = process.env.DAILY_LOG_PAGE_ID;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+// 성남시 좌표
+const LAT = 37.4449;
+const LON = 127.1388;
+
 // 텔레그램 메시지 전송
 async function sendTelegram(message) {
   return new Promise((resolve, reject) => {
@@ -28,6 +32,64 @@ async function sendTelegram(message) {
     req.write(body);
     req.end();
   });
+}
+
+// HTTP GET 요청
+async function httpGet(hostname, path) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({ hostname, path, method: 'GET' }, res => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(JSON.parse(data)));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+// 날씨 정보 가져오기 (Open-Meteo)
+async function getWeather() {
+  try {
+    const data = await httpGet(
+      'api.open-meteo.com',
+      `/v1/forecast?latitude=${LAT}&longitude=${LON}&current=temperature_2m,weathercode,windspeed_10m&timezone=Asia/Seoul`
+    );
+    const { temperature_2m, weathercode, windspeed_10m } = data.current;
+
+    const weatherEmoji = getWeatherEmoji(weathercode);
+    const desc = getWeatherDesc(weathercode);
+
+    return `${weatherEmoji} ${desc} / 기온 ${temperature_2m}°C / 바람 ${windspeed_10m}km/h`;
+  } catch (e) {
+    return '날씨 정보를 가져오지 못했어요 😢';
+  }
+}
+
+function getWeatherEmoji(code) {
+  if (code === 0) return '☀️';
+  if (code <= 2) return '🌤';
+  if (code === 3) return '☁️';
+  if (code <= 49) return '🌫';
+  if (code <= 59) return '🌦';
+  if (code <= 69) return '🌧';
+  if (code <= 79) return '❄️';
+  if (code <= 84) return '🌧';
+  if (code <= 99) return '⛈';
+  return '🌈';
+}
+
+function getWeatherDesc(code) {
+  if (code === 0) return '맑음';
+  if (code === 1) return '대체로 맑음';
+  if (code === 2) return '구름 조금';
+  if (code === 3) return '흐림';
+  if (code <= 49) return '안개';
+  if (code <= 59) return '이슬비';
+  if (code <= 69) return '비';
+  if (code <= 79) return '눈';
+  if (code <= 84) return '소나기';
+  if (code <= 99) return '뇌우';
+  return '알 수 없음';
 }
 
 // KST 기준 오늘 날짜 정보
@@ -165,18 +227,15 @@ async function copyBlockWithReset(block, dateInfo) {
   const { id, ...rest } = block;
   const copied = JSON.parse(JSON.stringify(rest));
 
-  // 체크박스 초기화
   if (copied.type === 'to_do') {
     copied.to_do.checked = false;
   }
 
-  // 날짜 텍스트 교체
   const richTextField = copied[copied.type]?.rich_text;
   if (richTextField) {
     copied[copied.type].rich_text = replaceDateInRichText(richTextField, dateInfo);
   }
 
-  // 하위 블록 재귀 처리 (체크된 항목 제거)
   if (['column_list', 'column', 'bulleted_list_item', 'numbered_list_item',
        'to_do', 'toggle', 'quote', 'callout'].includes(copied.type)) {
     const children = await getAllBlocks(id);
@@ -200,7 +259,6 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
       const filteredChildren = colChildren.filter(child => !isCheckedTodo(child));
       const copiedChildren = await Promise.all(filteredChildren.map(b => copyBlockWithReset(b, dateInfo)));
 
-      // 미완료 to_do 항목 텍스트 수집
       for (const child of filteredChildren) {
         if (child.type === 'to_do') {
           const text = extractText(child.to_do.rich_text);
@@ -241,25 +299,19 @@ async function main() {
   console.log(`📅 오늘 날짜 (KST): ${todayStr} ${dayName}요일`);
 
   try {
-    // 1. 년도 페이지 찾기 또는 생성
     const yearPageId = await findOrCreatePage(ROOT_PAGE_ID, `${year}년`);
-
-    // 2. 월 페이지 찾기 또는 생성
     const monthPageId = await findOrCreatePage(yearPageId, `${year}_${month}`);
 
-    // 3. 오늘 섹션 중복 확인
     const alreadyExists = await todayAlreadyExists(monthPageId, todayStr);
     if (alreadyExists) {
       console.log(`⚠️ 오늘 날짜 섹션이 이미 존재합니다.`);
-      await sendTelegram(`⚠️ <b>일일업무일지</b>\n오늘(${todayStr}) 섹션이 이미 존재합니다.`);
+      await sendTelegram(`⚠️ 오늘(${todayStr}) 일지가 이미 작성되어 있어요!`);
       return;
     }
 
-    // 4. 소스 column_list 찾기 (현재 월 → 없으면 이전 월)
     let sourceColumnListId = await findLatestColumnList(monthPageId);
 
     if (!sourceColumnListId) {
-      console.log(`🔍 현재 월 페이지에 내용 없음. 이전 월 페이지에서 찾는 중...`);
       const prevMonth = month === '01'
         ? { year: String(Number(year) - 1), month: '12' }
         : { year, month: String(Number(month) - 1).padStart(2, '0') };
@@ -279,21 +331,34 @@ async function main() {
       throw new Error('복사할 소스 섹션을 찾을 수 없습니다.');
     }
 
-    // 5. 오늘 섹션 추가
     const addedItems = await insertTodaySection(monthPageId, sourceColumnListId, dateInfo);
     console.log(`✅ 오늘(${todayStr}) 섹션 추가 완료`);
 
-    // 6. 텔레그램 성공 알림
+    const weather = await getWeather();
     const itemsText = addedItems.length > 0
-      ? `\n\n<b>오늘의 할 일:</b>\n${addedItems.join('\n')}`
+      ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}`
       : '';
+
     await sendTelegram(
-      `✅ <b>일일업무일지 작성 완료</b>\n${todayStr} ${dayName}요일${itemsText}`
+`🌅 좋은 아침이에요! 오늘도 화이팅입니다 😊
+
+📅 <b>${todayStr} ${dayName}요일</b>
+🏙 성남시 현재 날씨
+${weather}${itemsText}
+
+오늘 하루도 잘 부탁드려요! 💪`
     );
 
   } catch (err) {
     console.error('❌ 오류 발생:', err);
-    await sendTelegram(`❌ <b>일일업무일지 작성 실패</b>\n${todayStr}\n\n오류: ${err.message}`);
+    await sendTelegram(
+`😥 앗, 오늘 일지 작성 중에 문제가 생겼어요.
+
+📅 ${todayStr}
+❌ 오류 내용: ${err.message}
+
+확인 부탁드려요!`
+    );
     process.exit(1);
   }
 }

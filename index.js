@@ -1,13 +1,40 @@
 const { Client } = require('@notionhq/client');
+const https = require('https');
 
 const notion = new Client({ auth: process.env.NOTION_TOKEN });
-const ROOT_PAGE_ID = process.env.DAILY_LOG_PAGE_ID; // 일일업무일지 페이지 ID
+const ROOT_PAGE_ID = process.env.DAILY_LOG_PAGE_ID;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+// 텔레그램 메시지 전송
+async function sendTelegram(message) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      chat_id: TELEGRAM_CHAT_ID,
+      text: message,
+      parse_mode: 'HTML',
+    });
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path: `/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }, res => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve(JSON.parse(data)));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
 
 // KST 기준 오늘 날짜 정보
 function getKSTDate() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  const year = kst.getUTCFullYear();
+  const year = String(kst.getUTCFullYear());
   const month = String(kst.getUTCMonth() + 1).padStart(2, '0');
   const day = String(kst.getUTCDate()).padStart(2, '0');
   const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
@@ -44,7 +71,6 @@ async function findOrCreatePage(parentId, title) {
     console.log(`✅ 페이지 찾음: ${title}`);
     return found.id;
   }
-
   console.log(`🆕 페이지 생성: ${title}`);
   const res = await notion.pages.create({
     parent: { page_id: parentId },
@@ -72,39 +98,15 @@ async function getAllBlocks(pageId) {
   return blocks;
 }
 
-// columns 블록과 그 하위 블록 깊은 복사
-async function deepCopyBlock(block) {
-  const { id, type, ...rest } = block;
-  const copied = { type, ...rest };
-
-  // 하위 블록이 있는 경우 재귀적으로 복사
-  if (['column_list', 'column', 'bulleted_list_item', 'numbered_list_item',
-       'to_do', 'toggle', 'quote', 'callout', 'synced_block'].includes(type)) {
-    const children = await getAllBlocks(id);
-    if (children.length > 0) {
-      copied.children = await Promise.all(children.map(deepCopyBlock));
-    }
-  }
-  return copied;
-}
-
-// 날짜 헤더 텍스트에서 날짜 추출 (예: "2026년 04월 27일 월요일")
-function extractDateFromBlock(block) {
-  if (block.type !== 'column_list') return null;
-  // column_list 자체에는 날짜 정보 없음 — 첫 번째 column의 첫 번째 bulleted_list_item에서 찾음
-  return null; // 날짜는 하위 블록 탐색으로 찾음
-}
-
 // 블록 내 텍스트 추출
 function extractText(richText) {
   return richText?.map(t => t.plain_text).join('') || '';
 }
 
-// columns 블록에서 날짜 텍스트 찾기 (하위 블록 직접 탐색)
+// columns 블록에서 날짜 텍스트 찾기
 async function findDateInColumnList(blockId) {
   const columns = await getAllBlocks(blockId);
   if (!columns.length) return null;
-
   const firstColumnChildren = await getAllBlocks(columns[0].id);
   for (const child of firstColumnChildren) {
     if (child.type === 'bulleted_list_item') {
@@ -131,14 +133,12 @@ async function todayAlreadyExists(monthPageId, todayStr) {
 async function findLatestColumnList(monthPageId) {
   const blocks = await getAllBlocks(monthPageId);
   for (const block of blocks) {
-    if (block.type === 'column_list') {
-      return block.id;
-    }
+    if (block.type === 'column_list') return block.id;
   }
   return null;
 }
 
-// 날짜 관련 rich_text에서 날짜 부분만 오늘로 교체
+// 날짜 rich_text 교체
 function replaceDateInRichText(richText, { year, month, day, dayName }) {
   const newDateStr = `${year}년 ${month}월 ${day}일 ${dayName}요일`;
   return richText.map(rt => {
@@ -155,12 +155,17 @@ function replaceDateInRichText(richText, { year, month, day, dayName }) {
   });
 }
 
-// 체크박스 미완료로 초기화하면서 블록 복사 (날짜도 교체)
+// 체크된 to_do 블록인지 확인
+function isCheckedTodo(block) {
+  return block.type === 'to_do' && block.to_do?.checked === true;
+}
+
+// 블록 복사 (체크된 항목 제거 + 날짜 교체 + 체크박스 초기화)
 async function copyBlockWithReset(block, dateInfo) {
   const { id, ...rest } = block;
   const copied = JSON.parse(JSON.stringify(rest));
 
-  // to_do 체크박스 미완료로 초기화
+  // 체크박스 초기화
   if (copied.type === 'to_do') {
     copied.to_do.checked = false;
   }
@@ -171,30 +176,38 @@ async function copyBlockWithReset(block, dateInfo) {
     copied[copied.type].rich_text = replaceDateInRichText(richTextField, dateInfo);
   }
 
-  // 하위 블록 재귀 처리
+  // 하위 블록 재귀 처리 (체크된 항목 제거)
   if (['column_list', 'column', 'bulleted_list_item', 'numbered_list_item',
        'to_do', 'toggle', 'quote', 'callout'].includes(copied.type)) {
     const children = await getAllBlocks(id);
-    if (children.length > 0) {
-      copied.children = await Promise.all(children.map(b => copyBlockWithReset(b, dateInfo)));
+    const filteredChildren = children.filter(child => !isCheckedTodo(child));
+    if (filteredChildren.length > 0) {
+      copied.children = await Promise.all(filteredChildren.map(b => copyBlockWithReset(b, dateInfo)));
     }
   }
 
   return copied;
 }
 
-// column_list 블록과 하위 블록 전체 복사 후 맨 위에 삽입
+// 오늘 섹션 삽입
 async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
-  // 소스 블록 복사 (날짜 교체 + 체크박스 초기화)
-  const sourceBlock = await notion.blocks.retrieve({ block_id: sourceColumnListId });
-  const copiedBlock = await copyBlockWithReset(sourceBlock, dateInfo);
-
-  // column_list 하위의 column들 가져오기
   const columns = await getAllBlocks(sourceColumnListId);
+  const addedItems = [];
+
   const columnBlocks = await Promise.all(
     columns.map(async col => {
       const colChildren = await getAllBlocks(col.id);
-      const copiedChildren = await Promise.all(colChildren.map(b => copyBlockWithReset(b, dateInfo)));
+      const filteredChildren = colChildren.filter(child => !isCheckedTodo(child));
+      const copiedChildren = await Promise.all(filteredChildren.map(b => copyBlockWithReset(b, dateInfo)));
+
+      // 미완료 to_do 항목 텍스트 수집
+      for (const child of filteredChildren) {
+        if (child.type === 'to_do') {
+          const text = extractText(child.to_do.rich_text);
+          if (text) addedItems.push(`• ${text}`);
+        }
+      }
+
       return {
         object: 'block',
         type: 'column',
@@ -204,13 +217,8 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
     })
   );
 
-  // 페이지 맨 위에 column_list 삽입
-  const pageBlocks = await getAllBlocks(monthPageId);
-  const firstBlockId = pageBlocks.length > 0 ? pageBlocks[0].id : undefined;
-
   await notion.blocks.children.append({
     block_id: monthPageId,
-    after: undefined, // prepend 지원 안 되므로 아래에서 처리
     children: [
       {
         object: 'block',
@@ -221,15 +229,7 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
     ],
   });
 
-  // 방금 추가된 블록을 맨 위로 이동
-  const updatedBlocks = await getAllBlocks(monthPageId);
-  const newBlock = updatedBlocks[updatedBlocks.length - 1]; // 방금 추가된 블록
-
-  // Notion API는 블록 순서 변경을 직접 지원하지 않으므로
-  // 기존 블록들을 모두 새로 만들고 싶은 순서로 재정렬하는 방식 대신,
-  // after 파라미터 없이 추가하면 맨 마지막에 추가되므로
-  // 실제로는 맨 위에 추가하려면 아래 방식 사용:
-  console.log(`✅ 오늘(${dateInfo.year}년 ${dateInfo.month}월 ${dateInfo.day}일) 섹션 추가 완료`);
+  return addedItems;
 }
 
 // 메인 실행
@@ -240,54 +240,62 @@ async function main() {
 
   console.log(`📅 오늘 날짜 (KST): ${todayStr} ${dayName}요일`);
 
-  // 1. 년도 페이지 찾기 또는 생성
-  const yearTitle = `${year}년`;
-  const yearPageId = await findOrCreatePage(ROOT_PAGE_ID, yearTitle);
+  try {
+    // 1. 년도 페이지 찾기 또는 생성
+    const yearPageId = await findOrCreatePage(ROOT_PAGE_ID, `${year}년`);
 
-  // 2. 월 페이지 찾기 또는 생성
-  const monthTitle = `${year}_${month}`;
-  const monthPageId = await findOrCreatePage(yearPageId, monthTitle);
+    // 2. 월 페이지 찾기 또는 생성
+    const monthPageId = await findOrCreatePage(yearPageId, `${year}_${month}`);
 
-  // 3. 오늘 섹션이 이미 있는지 확인
-  const alreadyExists = await todayAlreadyExists(monthPageId, todayStr);
-  if (alreadyExists) {
-    console.log(`⚠️ 오늘 날짜 섹션이 이미 존재합니다. 종료합니다.`);
-    return;
-  }
+    // 3. 오늘 섹션 중복 확인
+    const alreadyExists = await todayAlreadyExists(monthPageId, todayStr);
+    if (alreadyExists) {
+      console.log(`⚠️ 오늘 날짜 섹션이 이미 존재합니다.`);
+      await sendTelegram(`⚠️ <b>일일업무일지</b>\n오늘(${todayStr}) 섹션이 이미 존재합니다.`);
+      return;
+    }
 
-  // 4. 가장 최근 column_list 찾기 (현재 월 페이지 → 없으면 이전 월 페이지)
-  let sourceColumnListId = await findLatestColumnList(monthPageId);
+    // 4. 소스 column_list 찾기 (현재 월 → 없으면 이전 월)
+    let sourceColumnListId = await findLatestColumnList(monthPageId);
 
-  if (!sourceColumnListId) {
-    console.log(`🔍 현재 월 페이지에 내용 없음. 이전 월 페이지에서 찾는 중...`);
-    const prevMonth = month === '01'
-      ? { year: String(Number(year) - 1), month: '12' }
-      : { year, month: String(Number(month) - 1).padStart(2, '0') };
+    if (!sourceColumnListId) {
+      console.log(`🔍 현재 월 페이지에 내용 없음. 이전 월 페이지에서 찾는 중...`);
+      const prevMonth = month === '01'
+        ? { year: String(Number(year) - 1), month: '12' }
+        : { year, month: String(Number(month) - 1).padStart(2, '0') };
 
-    const prevYearTitle = `${prevMonth.year}년`;
-    const prevYearChildren = await getChildPages(ROOT_PAGE_ID);
-    const prevYearPage = prevYearChildren.find(p => p.title === prevYearTitle);
-
-    if (prevYearPage) {
-      const prevMonthTitle = `${prevMonth.year}_${prevMonth.month}`;
-      const prevMonthChildren = await getChildPages(prevYearPage.id);
-      const prevMonthPage = prevMonthChildren.find(p => p.title === prevMonthTitle);
-      if (prevMonthPage) {
-        sourceColumnListId = await findLatestColumnList(prevMonthPage.id);
+      const prevYearChildren = await getChildPages(ROOT_PAGE_ID);
+      const prevYearPage = prevYearChildren.find(p => p.title === `${prevMonth.year}년`);
+      if (prevYearPage) {
+        const prevMonthChildren = await getChildPages(prevYearPage.id);
+        const prevMonthPage = prevMonthChildren.find(p => p.title === `${prevMonth.year}_${prevMonth.month}`);
+        if (prevMonthPage) {
+          sourceColumnListId = await findLatestColumnList(prevMonthPage.id);
+        }
       }
     }
-  }
 
-  if (!sourceColumnListId) {
-    console.log(`❌ 복사할 소스 섹션을 찾을 수 없습니다.`);
-    return;
-  }
+    if (!sourceColumnListId) {
+      throw new Error('복사할 소스 섹션을 찾을 수 없습니다.');
+    }
 
-  // 5. 오늘 섹션 추가
-  await insertTodaySection(monthPageId, sourceColumnListId, dateInfo);
+    // 5. 오늘 섹션 추가
+    const addedItems = await insertTodaySection(monthPageId, sourceColumnListId, dateInfo);
+    console.log(`✅ 오늘(${todayStr}) 섹션 추가 완료`);
+
+    // 6. 텔레그램 성공 알림
+    const itemsText = addedItems.length > 0
+      ? `\n\n<b>오늘의 할 일:</b>\n${addedItems.join('\n')}`
+      : '';
+    await sendTelegram(
+      `✅ <b>일일업무일지 작성 완료</b>\n${todayStr} ${dayName}요일${itemsText}`
+    );
+
+  } catch (err) {
+    console.error('❌ 오류 발생:', err);
+    await sendTelegram(`❌ <b>일일업무일지 작성 실패</b>\n${todayStr}\n\n오류: ${err.message}`);
+    process.exit(1);
+  }
 }
 
-main().catch(err => {
-  console.error('❌ 오류 발생:', err);
-  process.exit(1);
-});
+main();

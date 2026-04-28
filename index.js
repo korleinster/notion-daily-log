@@ -179,7 +179,19 @@ function convertBlockFlat(block, dateInfo, addedItems) {
   // children 필드 제거 (별도로 추가할 거임)
   delete blockData.children;
 
-  return { object: 'block', type, [type]: blockData };
+  // null 값인 필드 제거 (Notion API는 null 허용 안 함)
+  function removeNulls(obj) {
+    if (typeof obj !== 'object' || obj === null) return obj;
+    if (Array.isArray(obj)) return obj.map(removeNulls);
+    return Object.fromEntries(
+      Object.entries(obj)
+        .filter(([_, v]) => v !== null)
+        .map(([k, v]) => [k, removeNulls(v)])
+    );
+  }
+  const cleanBlockData = removeNulls(blockData);
+
+  return { object: 'block', type, [type]: cleanBlockData };
 }
 
 // 블록 트리를 재귀적으로 추가

@@ -84,10 +84,10 @@ async function findPage(parentId, title) {
 
 async function findOrCreatePage(parentId, title) {
   const found = await findPage(parentId, title);
-  if (found) { console.log(`✅ 페이지 찾음: ${title}`); return { id: found.id, created: false }; }
+  if (found) { console.log(`✅ 페이지 찾음: ${title}`); return found.id; }
   console.log(`🆕 페이지 생성: ${title}`);
   const res = await notion.pages.create({ parent: { page_id: parentId }, properties: { title: { title: [{ text: { content: title } }] } } });
-  return { id: res.id, created: true };
+  return res.id;
 }
 
 async function getAllBlocks(pageId) {
@@ -106,17 +106,31 @@ function extractText(richText) {
   return richText?.map(t => t.plain_text).join('') || '';
 }
 
-// 월 페이지의 일 페이지 중 가장 최근 것 찾기 (제목 형식: YYYY_MM_DD)
+// 월 페이지에서 가장 최근 일 페이지 찾기 (YYYY_MM_DD 형식)
 async function findLatestDayPage(monthPageId) {
   const children = await getChildPages(monthPageId);
   const dayPages = children.filter(p => /^\d{4}_\d{2}_\d{2}/.test(p.title));
   if (dayPages.length === 0) return null;
-  // 제목 기준으로 내림차순 정렬 후 첫 번째
   dayPages.sort((a, b) => b.title.localeCompare(a.title));
   return dayPages[0];
 }
 
-// 페이지에서 첫 번째 column_list 블록 ID 반환 (최신 내용)
+// 이전 달/해의 가장 최근 일 페이지 찾기
+async function findPrevMonthLatestDayPage(year, month) {
+  const prevMonth = month === '01'
+    ? { year: String(Number(year) - 1), month: '12' }
+    : { year, month: String(Number(month) - 1).padStart(2, '0') };
+
+  const prevYearPage = await findPage(ROOT_PAGE_ID, `${prevMonth.year}년`);
+  if (!prevYearPage) return null;
+
+  const prevMonthPage = await findPage(prevYearPage.id, `${prevMonth.year}_${prevMonth.month}`);
+  if (!prevMonthPage) return null;
+
+  return await findLatestDayPage(prevMonthPage.id);
+}
+
+// 페이지에서 첫 번째 column_list ID 반환
 async function findFirstColumnList(pageId) {
   const blocks = await getAllBlocks(pageId);
   for (const block of blocks) {
@@ -246,29 +260,6 @@ async function appendColumnList(pageId, sourceColumnListId, dateInfo, addedItems
   }
 }
 
-// 이전 달/해의 마지막 일 페이지에서 column_list 찾기
-async function findPrevSourceColumnList(year, month) {
-  const prevMonth = month === '01'
-    ? { year: String(Number(year) - 1), month: '12' }
-    : { year, month: String(Number(month) - 1).padStart(2, '0') };
-
-  const prevYearPage = await findPage(ROOT_PAGE_ID, `${prevMonth.year}년`);
-  if (!prevYearPage) return null;
-
-  const prevMonthPage = await findPage(prevYearPage.id, `${prevMonth.year}_${prevMonth.month}`);
-  if (!prevMonthPage) return null;
-
-  // 이전 달의 가장 최근 일 페이지 찾기
-  const latestDayPage = await findLatestDayPage(prevMonthPage.id);
-  if (latestDayPage) {
-    const columnListId = await findFirstColumnList(latestDayPage.id);
-    if (columnListId) return columnListId;
-  }
-
-  // 일 페이지가 없으면 월 페이지에서 직접 찾기 (구버전 호환)
-  return await findFirstColumnList(prevMonthPage.id);
-}
-
 async function main() {
   const dateInfo = getKSTDate();
   const { year, month, day, dayName } = dateInfo;
@@ -279,10 +270,10 @@ async function main() {
 
   try {
     // 1. 년도 페이지
-    const { id: yearPageId } = await findOrCreatePage(ROOT_PAGE_ID, `${year}년`);
+    const yearPageId = await findOrCreatePage(ROOT_PAGE_ID, `${year}년`);
 
     // 2. 월 페이지
-    const { id: monthPageId } = await findOrCreatePage(yearPageId, `${year}_${month}`);
+    const monthPageId = await findOrCreatePage(yearPageId, `${year}_${month}`);
 
     // 3. 오늘 일 페이지 중복 확인
     const existingDayPage = await findPage(monthPageId, dayPageTitle);
@@ -292,28 +283,24 @@ async function main() {
       return;
     }
 
-    // 4. 소스 column_list 찾기 (이전 일 페이지 → 이전 달)
-    let sourceColumnListId = null;
-
-    // 현재 달의 가장 최근 일 페이지에서 찾기
-    const latestDayPage = await findLatestDayPage(monthPageId);
-    if (latestDayPage) {
-      sourceColumnListId = await findFirstColumnList(latestDayPage.id);
-      console.log(`📋 소스: ${latestDayPage.title}`);
-    }
-
-    // 현재 달에 일 페이지가 없으면 이전 달에서 찾기
-    if (!sourceColumnListId) {
+    // 4. 소스 일 페이지 찾기
+    // 현재 달의 가장 최근 일 페이지 → 없으면 이전 달의 가장 최근 일 페이지
+    let sourceDayPage = await findLatestDayPage(monthPageId);
+    if (!sourceDayPage) {
       console.log(`🔍 현재 달에 일 페이지 없음. 이전 달에서 찾는 중...`);
-      sourceColumnListId = await findPrevSourceColumnList(year, month);
+      sourceDayPage = await findPrevMonthLatestDayPage(year, month);
     }
 
-    if (!sourceColumnListId) throw new Error('복사할 소스 섹션을 찾을 수 없습니다. 첫 일지를 수동으로 작성해주세요.');
+    if (!sourceDayPage) throw new Error('복사할 이전 일지를 찾을 수 없습니다. 첫 일지를 수동으로 작성해주세요.');
 
-    // 5. 오늘 일 페이지 생성
-    const { id: dayPageId } = await findOrCreatePage(monthPageId, dayPageTitle);
+    console.log(`📋 소스 페이지: ${sourceDayPage.title}`);
 
-    // 6. 내용 복사
+    // 5. 소스 일 페이지에서 column_list 찾기
+    const sourceColumnListId = await findFirstColumnList(sourceDayPage.id);
+    if (!sourceColumnListId) throw new Error(`소스 페이지(${sourceDayPage.title})에서 내용을 찾을 수 없습니다.`);
+
+    // 6. 오늘 일 페이지 생성 후 내용 복사
+    const dayPageId = await findOrCreatePage(monthPageId, dayPageTitle);
     const addedItems = [];
     await appendColumnList(dayPageId, sourceColumnListId, dateInfo, addedItems);
     console.log(`✅ 오늘(${dayPageTitle}) 페이지 생성 완료`);

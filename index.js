@@ -151,85 +151,128 @@ function isCheckedTodo(block) {
   return block.type === 'to_do' && block.to_do?.checked === true;
 }
 
-// 블록을 Notion API 형식으로 변환 (id 제거, children 재귀 처리)
-async function convertBlock(block, dateInfo, addedItems) {
-  // 체크된 todo는 건너뜀
+const UNSUPPORTED_TYPES = ['unsupported', 'child_page', 'child_database'];
+
+// 블록을 Notion API 형식으로 변환 (children 없이, 평탄한 블록만)
+function convertBlockFlat(block, dateInfo, addedItems) {
   if (isCheckedTodo(block)) return null;
 
   const type = block.type;
+  if (UNSUPPORTED_TYPES.includes(type)) return null;
 
-  // Notion API로 생성 불가능한 블록 타입 건너뜀
-  const unsupportedTypes = ["unsupported", "child_page", "child_database"];
-  if (unsupportedTypes.includes(type)) return null;
-
-  // block[type]이 없는 경우 빈 paragraph로 처리
   if (!block[type]) {
-    return { object: "block", type: "paragraph", paragraph: { rich_text: [] } };
+    return { object: 'block', type: 'paragraph', paragraph: { rich_text: [] } };
   }
 
   const blockData = JSON.parse(JSON.stringify(block[type]));
 
-  // rich_text 날짜 교체
   if (blockData.rich_text) {
     blockData.rich_text = replaceDateInRichText(blockData.rich_text, dateInfo);
   }
 
-  // 체크박스 초기화
   if (type === 'to_do') {
     blockData.checked = false;
     const text = extractText(block.to_do.rich_text);
     if (text) addedItems.push(`• ${text}`);
   }
 
-  // 하위 블록 재귀 처리
-  let children = [];
-  if (['column_list', 'column', 'bulleted_list_item', 'numbered_list_item', 'to_do', 'toggle', 'quote', 'callout'].includes(type)) {
-    const subBlocks = await getAllBlocks(block.id);
-    for (const sub of subBlocks) {
-      const converted = await convertBlock(sub, dateInfo, addedItems);
-      if (converted) children.push(converted);
+  // children 필드 제거 (별도로 추가할 거임)
+  delete blockData.children;
+
+  return { object: 'block', type, [type]: blockData };
+}
+
+// 블록 트리를 재귀적으로 추가
+// parentId 아래에 sourceBlocks 의 변환된 형태를 순서대로 append
+async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo, addedItems) {
+  // 1. 먼저 평탄한 블록들을 한꺼번에 append
+  const flatBlocks = [];
+  const sourceBlocksFiltered = [];
+
+  for (const src of sourceBlocks) {
+    const converted = convertBlockFlat(src, dateInfo, addedItems);
+    if (converted) {
+      flatBlocks.push(converted);
+      sourceBlocksFiltered.push(src);
     }
   }
 
-  // children은 blockData(타입 객체 내부)에 넣어야 함
-  if (children.length > 0) blockData.children = children;
+  if (flatBlocks.length === 0) return;
 
-  return { object: 'block', type, [type]: blockData };
+  const res = await notion.blocks.children.append({
+    block_id: parentId,
+    children: flatBlocks,
+  });
+
+  // 2. 각 추가된 블록에 대해, 원본에 children이 있었으면 재귀적으로 append
+  for (let i = 0; i < res.results.length; i++) {
+    const newBlock = res.results[i];
+    const srcBlock = sourceBlocksFiltered[i];
+
+    // children을 가질 수 있는 타입만 재귀
+    if (!newBlock.has_children && srcBlock.has_children) {
+      // newBlock은 children이 없지만 src는 있음 (일반적으로 발생 안 함)
+    }
+    if (srcBlock.has_children) {
+      const subBlocks = await getAllBlocks(srcBlock.id);
+      if (subBlocks.length > 0) {
+        await appendBlocksRecursive(newBlock.id, subBlocks, dateInfo, addedItems);
+      }
+    }
+  }
 }
 
 async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
   const addedItems = [];
 
-  // column_list 하위의 column 블록들 직접 가져오기
-  const columnBlocks = await getAllBlocks(sourceColumnListId);
-  const convertedColumns = [];
+  // 1. column_list 만들 때 column들도 함께 (이건 1단계에서 다 만들어야 함, Notion 제약)
+  const sourceColumns = await getAllBlocks(sourceColumnListId);
 
-  for (const col of columnBlocks) {
+  const columnsForCreation = [];
+  const sourceColumnsFiltered = [];
+
+  for (const col of sourceColumns) {
     if (col.type !== 'column') continue;
-    const subBlocks = await getAllBlocks(col.id);
-    const convertedChildren = [];
-    for (const sub of subBlocks) {
-      const converted = await convertBlock(sub, dateInfo, addedItems);
-      if (converted) convertedChildren.push(converted);
-    }
-    if (convertedChildren.length > 0) {
-      convertedColumns.push({ object: 'block', type: 'column', column: { children: convertedChildren } });
-    }
+    columnsForCreation.push({ object: 'block', type: 'column', column: { children: [{ object: 'block', type: 'paragraph', paragraph: { rich_text: [] } }] } });
+    sourceColumnsFiltered.push(col);
   }
 
-  if (convertedColumns.length < 2) {
-    throw new Error();
+  if (columnsForCreation.length < 2) {
+    throw new Error('column이 2개 이상 필요합니다.');
   }
 
-  // column_list.children 안에 column들을 넣어야 함 (블록 바깥의 children이 아니라)
-  await notion.blocks.children.append({
+  // column_list + column들 생성 (각 column은 placeholder 1개씩)
+  const res = await notion.blocks.children.append({
     block_id: monthPageId,
     children: [{
       object: 'block',
       type: 'column_list',
-      column_list: { children: convertedColumns },
+      column_list: { children: columnsForCreation },
     }],
   });
+
+  const newColumnListId = res.results[0].id;
+
+  // 새로 만든 column들의 ID 가져오기
+  const newColumns = await getAllBlocks(newColumnListId);
+
+  // 각 column에 실제 내용 추가
+  for (let i = 0; i < newColumns.length; i++) {
+    const newCol = newColumns[i];
+    const srcCol = sourceColumnsFiltered[i];
+
+    // placeholder paragraph 삭제
+    const placeholders = await getAllBlocks(newCol.id);
+    for (const p of placeholders) {
+      try { await notion.blocks.delete({ block_id: p.id }); } catch (e) {}
+    }
+
+    // 실제 내용 추가
+    const subBlocks = await getAllBlocks(srcCol.id);
+    if (subBlocks.length > 0) {
+      await appendBlocksRecursive(newCol.id, subBlocks, dateInfo, addedItems);
+    }
+  }
 
   return addedItems;
 }

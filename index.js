@@ -151,20 +151,25 @@ function isCheckedTodo(block) {
   return block.type === 'to_do' && block.to_do?.checked === true;
 }
 
+function removeNulls(obj) {
+  if (typeof obj !== 'object' || obj === null) return obj;
+  if (Array.isArray(obj)) return obj.map(removeNulls);
+  return Object.fromEntries(
+    Object.entries(obj)
+      .filter(([_, v]) => v !== null)
+      .map(([k, v]) => [k, removeNulls(v)])
+  );
+}
+
 const UNSUPPORTED_TYPES = ['unsupported', 'child_page', 'child_database'];
 
-// 블록을 Notion API 형식으로 변환 (children 없이, 평탄한 블록만)
 function convertBlockFlat(block, dateInfo, addedItems) {
   if (isCheckedTodo(block)) return null;
-
   const type = block.type;
   if (UNSUPPORTED_TYPES.includes(type)) return null;
+  if (!block[type]) return { object: 'block', type: 'paragraph', paragraph: { rich_text: [] } };
 
-  if (!block[type]) {
-    return { object: 'block', type: 'paragraph', paragraph: { rich_text: [] } };
-  }
-
-  const blockData = JSON.parse(JSON.stringify(block[type]));
+  const blockData = removeNulls(JSON.parse(JSON.stringify(block[type])));
 
   if (blockData.rich_text) {
     blockData.rich_text = replaceDateInRichText(blockData.rich_text, dateInfo);
@@ -175,33 +180,16 @@ function convertBlockFlat(block, dateInfo, addedItems) {
     const text = extractText(block.to_do.rich_text);
     if (text) {
       const depth = addedItems._depth || 0;
-      const indent = '　'.repeat(depth);
+      const indent = '  '.repeat(depth);
       addedItems.push(`${indent}• ${text}`);
     }
   }
 
-  // children 필드 제거 (별도로 추가할 거임)
   delete blockData.children;
-
-  // null 값인 필드 제거 (Notion API는 null 허용 안 함)
-  function removeNulls(obj) {
-    if (typeof obj !== 'object' || obj === null) return obj;
-    if (Array.isArray(obj)) return obj.map(removeNulls);
-    return Object.fromEntries(
-      Object.entries(obj)
-        .filter(([_, v]) => v !== null)
-        .map(([k, v]) => [k, removeNulls(v)])
-    );
-  }
-  const cleanBlockData = removeNulls(blockData);
-
-  return { object: 'block', type, [type]: cleanBlockData };
+  return { object: 'block', type, [type]: blockData };
 }
 
-// 블록 트리를 재귀적으로 추가
-// parentId 아래에 sourceBlocks 의 변환된 형태를 순서대로 append
 async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo, addedItems) {
-  // 1. 먼저 평탄한 블록들을 한꺼번에 append
   const flatBlocks = [];
   const sourceBlocksFiltered = [];
 
@@ -215,38 +203,24 @@ async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo, addedItem
 
   if (flatBlocks.length === 0) return;
 
-  const res = await notion.blocks.children.append({
-    block_id: parentId,
-    children: flatBlocks,
-  });
+  const res = await notion.blocks.children.append({ block_id: parentId, children: flatBlocks });
 
-  // 2. 각 추가된 블록에 대해, 원본에 children이 있었으면 재귀적으로 append
   for (let i = 0; i < res.results.length; i++) {
     const newBlock = res.results[i];
     const srcBlock = sourceBlocksFiltered[i];
-
-    // children을 가질 수 있는 타입만 재귀
-    if (!newBlock.has_children && srcBlock.has_children) {
-      // newBlock은 children이 없지만 src는 있음 (일반적으로 발생 안 함)
-    }
     if (srcBlock.has_children) {
       const subBlocks = await getAllBlocks(srcBlock.id);
       if (subBlocks.length > 0) {
         addedItems._depth = (addedItems._depth || 0) + 1;
         await appendBlocksRecursive(newBlock.id, subBlocks, dateInfo, addedItems);
-        addedItems._depth = (addedItems._depth || 1) - 1;
+        addedItems._depth = Math.max(0, (addedItems._depth || 1) - 1);
       }
     }
   }
 }
 
-async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
-  const addedItems = [];
-
-  // 기존 블록들 미리 저장
-  const existingBlocks = await getAllBlocks(monthPageId);
-
-  // 1. column_list + column들 생성
+// column_list 블록을 parentId 아래에 재생성 (날짜 교체 없이 그대로 복사)
+async function recreateColumnList(parentId, sourceColumnListId, dateInfo, addedItems) {
   const sourceColumns = await getAllBlocks(sourceColumnListId);
   const columnsForCreation = [];
   const sourceColumnsFiltered = [];
@@ -257,17 +231,16 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
     sourceColumnsFiltered.push(col);
   }
 
-  if (columnsForCreation.length < 2) throw new Error('column이 2개 이상 필요합니다.');
+  if (columnsForCreation.length < 2) return;
 
   const res = await notion.blocks.children.append({
-    block_id: monthPageId,
+    block_id: parentId,
     children: [{ object: 'block', type: 'column_list', column_list: { children: columnsForCreation } }],
   });
 
   const newColumnListId = res.results[0].id;
   const newColumns = await getAllBlocks(newColumnListId);
 
-  // 각 column에 실제 내용 추가
   for (let i = 0; i < newColumns.length; i++) {
     const newCol = newColumns[i];
     const srcCol = sourceColumnsFiltered[i];
@@ -279,39 +252,30 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
 
     const subBlocks = await getAllBlocks(srcCol.id);
     if (subBlocks.length > 0) {
-      await appendBlocksRecursive(newCol.id, subBlocks, dateInfo, addedItems);
+      await appendBlocksRecursive(newCol.id, subBlocks, dateInfo || {}, addedItems || []);
     }
   }
+}
 
-  // 2. 기존 블록들을 새 섹션 뒤로 이동 (새 섹션을 맨 위로)
-  // 기존 블록을 다시 맨 뒤에 append 후 원본 삭제
+async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
+  const addedItems = [];
+
+  // 1. 기존 블록 ID들 미리 저장
+  const existingBlocks = await getAllBlocks(monthPageId);
+
+  // 2. 오늘 섹션 맨 아래에 추가
+  await recreateColumnList(monthPageId, sourceColumnListId, dateInfo, addedItems);
+  console.log(`✅ 새 섹션 추가 완료`);
+
+  // 3. 기존 column_list 블록들을 새 섹션 아래로 이동 (재생성 후 원본 삭제)
   for (const block of existingBlocks) {
-    if (block.type === 'unsupported' || block.type === 'child_page' || block.type === 'child_database') continue;
+    if (block.type !== 'column_list') continue;
     try {
-      // 기존 블록을 맨 뒤에 복사
-      const blockData = JSON.parse(JSON.stringify(block[block.type] || {}));
-      delete blockData.children;
-      function removeNullsLocal(obj) {
-        if (typeof obj !== 'object' || obj === null) return obj;
-        if (Array.isArray(obj)) return obj.map(removeNullsLocal);
-        return Object.fromEntries(Object.entries(obj).filter(([_, v]) => v !== null).map(([k, v]) => [k, removeNullsLocal(v)]));
-      }
-      const cleanData = removeNullsLocal(blockData);
-      const appendRes = await notion.blocks.children.append({
-        block_id: monthPageId,
-        children: [{ object: 'block', type: block.type, [block.type]: cleanData }],
-      });
-      // 새로 추가된 블록에 children 재귀적으로 추가
-      if (block.has_children) {
-        const subBlocks = await getAllBlocks(block.id);
-        if (subBlocks.length > 0) {
-          await appendBlocksRecursive(appendRes.results[0].id, subBlocks, dateInfo, []);
-        }
-      }
-      // 원본 삭제
+      await recreateColumnList(monthPageId, block.id, {}, []);
       await notion.blocks.delete({ block_id: block.id });
+      console.log(`🔄 블록 이동 완료`);
     } catch (e) {
-      console.log();
+      console.log(`⚠️ 블록 이동 실패: ${e.message}`);
     }
   }
 
@@ -354,7 +318,7 @@ async function main() {
     if (!sourceColumnListId) throw new Error('복사할 소스 섹션을 찾을 수 없습니다.');
 
     const addedItems = await insertTodaySection(monthPageId, sourceColumnListId, dateInfo);
-    console.log(`✅ 오늘(${todayStr}) 섹션 추가 완료`);
+    console.log(`✅ 오늘(${todayStr}) 섹션 맨 위에 추가 완료`);
 
     const weather = await getWeather();
     const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';

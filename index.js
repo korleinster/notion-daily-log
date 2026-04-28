@@ -191,10 +191,10 @@ async function convertBlock(block, dateInfo, addedItems) {
     }
   }
 
-  const result = { object: 'block', type, [type]: blockData };
-  if (children.length > 0) result.children = children;
+  // children은 blockData(타입 객체 내부)에 넣어야 함
+  if (children.length > 0) blockData.children = children;
 
-  return result;
+  return { object: 'block', type, [type]: blockData };
 }
 
 async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {

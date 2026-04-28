@@ -159,7 +159,7 @@ async function convertBlock(block, dateInfo, addedItems) {
   const type = block.type;
 
   // Notion API로 생성 불가능한 블록 타입 건너뜀
-  const unsupportedTypes = ["unsupported", "child_page", "child_database", "column_list", "column"];
+  const unsupportedTypes = ["unsupported", "child_page", "child_database"];
   if (unsupportedTypes.includes(type)) return null;
 
   // block[type]이 없는 경우 빈 paragraph로 처리
@@ -220,6 +220,9 @@ async function insertTodaySection(monthPageId, sourceColumnListId, dateInfo) {
   if (convertedColumns.length < 2) {
     throw new Error();
   }
+
+  console.log('convertedColumns count:', convertedColumns.length);
+  console.log('convertedColumns JSON:', JSON.stringify(convertedColumns, null, 2).substring(0, 500));
 
   await notion.blocks.children.append({
     block_id: monthPageId,

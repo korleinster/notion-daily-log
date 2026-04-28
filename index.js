@@ -157,6 +157,16 @@ async function convertBlock(block, dateInfo, addedItems) {
   if (isCheckedTodo(block)) return null;
 
   const type = block.type;
+
+  // Notion API로 생성 불가능한 블록 타입 건너뜀
+  const unsupportedTypes = ["unsupported", "child_page", "child_database", "column_list", "column"];
+  if (unsupportedTypes.includes(type)) return null;
+
+  // block[type]이 없는 경우 빈 paragraph로 처리
+  if (!block[type]) {
+    return { object: "block", type: "paragraph", paragraph: { rich_text: [] } };
+  }
+
   const blockData = JSON.parse(JSON.stringify(block[type]));
 
   // rich_text 날짜 교체

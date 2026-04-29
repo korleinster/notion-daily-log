@@ -107,6 +107,13 @@
 ### 사용 모델
 - `gemini-2.5-flash-lite` (Default Gemini Project)
 
+### 동작 방식
+1. `git push` 실행
+2. Gemini가 `index.js` 자동 리뷰
+3. 터미널에 결과 출력
+4. 텔레그램으로도 결과 전송 (길면 문단 단위로 나눠서 전송)
+5. 푸시 여부 y/n 선택
+
 ### 로컬 .env 필요 변수
 ```
 NOTION_TOKEN=...
@@ -119,6 +126,7 @@ GEMINI_API_KEY=...
 ```
 
 > ⚠️ `.env`는 `.gitignore`에 등록되어 있어 깃헙에 올라가지 않음
+> ⚠️ `TELEGRAM_BOT_TOKEN`과 `TELEGRAM_CHAT_ID`는 로컬 `.env`에도 있어야 텔레그램 전송이 작동함
 
 ---
 

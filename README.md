@@ -18,7 +18,7 @@
 일일업무일지 (ROOT_PAGE_ID: 0a1501a086b945b1b84b7dfc8b44bf52)
 └── 2026년
     └── 2026_04
-        └── 2026_04_28 (화)   ← 일 페이지 (스크립트가 생성)
+        └── 2026_04_28 (화)
         └── 2026_04_29 (수)
         └── ...
 ```
@@ -47,16 +47,15 @@
 
 📋 오늘의 할 일
 • 기획서 검토
-  • 세부 항목
 
 오늘 하루도 잘 부탁드려요! 💪
 ```
 
 ### 평일 중복 실행
-- 동일 메시지 + 마지막 문구: `이미 일지가 있어서 다시 한 번 보내드렸어요~ 📋`
+- 동일 메시지 + `이미 일지가 있어서 다시 한 번 보내드렸어요~ 📋`
 
 ### 주말 최초 실행
-- 날씨 + 일정만 전송 (할 일 없음) + `푹 쉬고 충전하는 하루 되세요! 🌿`
+- 날씨 + 일정만 전송 + `푹 쉬고 충전하는 하루 되세요! 🌿`
 
 ### 주말 중복 실행
 - 날씨 + 일정만 전송 + `이미 보내드렸는데 다시 한 번 보내드렸어요~ 😄`
@@ -73,6 +72,7 @@
 | `TELEGRAM_CHAT_ID` | 텔레그램 챗 ID (`5515513986`) |
 | `APPLE_ID` | Apple ID 이메일 (`leinster92@gmail.com`) |
 | `APPLE_APP_PASSWORD` | Apple 앱 암호 (appleid.apple.com에서 발급) |
+| `GEMINI_API_KEY` | Gemini API 키 (aistudio.google.com) — 로컬 .env에만 사용 |
 
 ---
 
@@ -90,22 +90,35 @@
 
 ## ⏰ GitHub Actions 스케줄
 
-- **평일/주말 매일 KST 오전 7시** 자동 실행
+- **매일 KST 오전 7시** 자동 실행
 - 수동 실행: `gh workflow run daily-work-log.yml`
 - 사용량 확인: GitHub → Settings → Billing and plans
 
 ---
 
-## 🔄 배포 방법
+## 🤖 Gemini 코드 리뷰 (pre-push hook)
 
-```bash
-cd /Users/leinster/Documents/Claude/Notion/notion-daily-log
-cp ~/Downloads/index.js ./index.js
-# README 업데이트 후
-git add . && git commit -m "커밋 메시지" && git push
+`git push` 전에 자동으로 Gemini가 `index.js`를 리뷰하고 텔레그램으로 결과 전송.
+
+### 구성 파일
+- `.git/hooks/pre-push` — hook 진입점
+- `.git/hooks/review.js` — Gemini API 호출 및 텔레그램 전송 로직
+
+### 사용 모델
+- `gemini-2.5-flash-lite` (Default Gemini Project)
+
+### 로컬 .env 필요 변수
+```
+NOTION_TOKEN=...
+DAILY_LOG_PAGE_ID=...
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+APPLE_ID=...
+APPLE_APP_PASSWORD=...
+GEMINI_API_KEY=...
 ```
 
-> ⚠️ 배포 시 항상 README도 함께 업데이트할 것
+> ⚠️ `.env`는 `.gitignore`에 등록되어 있어 깃헙에 올라가지 않음
 
 ---
 
@@ -121,4 +134,17 @@ git add . && git commit -m "커밋 메시지" && git push
 - **Apple iCloud CalDAV** 연동
 - 오늘 + 앞으로 3일(총 4일) 일정 표시
 - 반복 일정 지원
-- 환경변수 없으면 캘린더 섹션 생략 (에러 없음)
+- 환경변수 없으면 캘린더 섹션 생략
+
+---
+
+## 🔄 배포 방법
+
+```bash
+cd /Users/leinster/Documents/Claude/Notion/notion-daily-log
+# index.js 수정 후
+git add . && git commit -m "커밋 메시지" && git push
+# git push 시 Gemini 리뷰 자동 실행됨
+```
+
+> ⚠️ 배포 시 항상 README도 함께 업데이트할 것

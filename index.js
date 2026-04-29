@@ -54,7 +54,7 @@ async function httpGet(hostname, path) {
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try { resolve(JSON.parse(data)); }
-        catch (e) { reject(new Error(`JSON 파싱 실패 (${hostname}): ${data.slice(0, 100)}`)); }
+        catch (e) { reject(new Error(`JSON 파싱 실패 (${hostname}): ${String(data).slice(0, 200) || '(빈 응답)'}`)); }
       });
     });
     req.on('error', reject);
@@ -154,12 +154,22 @@ async function getCalendarEvents() {
                 const startJS = next.toJSDate();
                 if (startJS >= rangeEnd) break;
                 if (startJS >= todayStart) {
-                  // duration이 없을 경우 안전하게 처리
-                  const durationSec = event.duration?.toSeconds?.() ?? 0;
+                  // duration이 없을 경우 endDate - startDate로 계산
+                  let endJS;
+                  try {
+                    const durationSec = event.duration?.toSeconds?.();
+                    if (typeof durationSec === 'number' && durationSec > 0) {
+                      endJS = new Date(startJS.getTime() + durationSec * 1000);
+                    } else {
+                      endJS = event.endDate?.toJSDate?.() || new Date(startJS.getTime() + 60 * 60 * 1000);
+                    }
+                  } catch (e) {
+                    endJS = new Date(startJS.getTime() + 60 * 60 * 1000);
+                  }
                   events.push({
                     summary: event.summary || '(제목 없음)',
                     start: startJS,
-                    end: new Date(startJS.getTime() + durationSec * 1000),
+                    end: endJS,
                     allDay: next.isDate,
                   });
                 }
@@ -205,11 +215,17 @@ function formatCalendarSection(events) {
 
   const grouped = {};
   for (const ev of events) {
-    // allDay 이벤트는 이미 날짜 기준이므로 UTC 그대로, 시간 이벤트는 KST 변환
+    // toJSDate()는 UTC 기준 Date 객체를 반환하므로 +9h로 KST 변환
+    // allDay 이벤트는 시간 정보가 없으므로 UTC 날짜 그대로 사용
     const evKST = ev.allDay ? ev.start : new Date(ev.start.getTime() + 9 * 60 * 60 * 1000);
     const key = `${evKST.getUTCFullYear()}-${String(evKST.getUTCMonth()+1).padStart(2,'0')}-${String(evKST.getUTCDate()).padStart(2,'0')}`;
     if (!grouped[key]) grouped[key] = [];
     grouped[key].push({ ev, evKST });
+  }
+
+  // 각 날짜 그룹 내 이벤트를 시작 시간순 정렬
+  for (const key of Object.keys(grouped)) {
+    grouped[key].sort((a, b) => a.ev.start - b.ev.start);
   }
 
   const todayEvents = grouped[todayKey] || [];
@@ -227,6 +243,7 @@ function formatCalendarSection(events) {
       } else {
         const hh = String(evKST.getUTCHours()).padStart(2,'0');
         const mm = String(evKST.getUTCMinutes()).padStart(2,'0');
+        // ev.end도 UTC 기준이므로 +9h KST 변환
         const endKST = new Date(ev.end.getTime() + 9 * 60 * 60 * 1000);
         const ehh = String(endKST.getUTCHours()).padStart(2,'0');
         const emm = String(endKST.getUTCMinutes()).padStart(2,'0');

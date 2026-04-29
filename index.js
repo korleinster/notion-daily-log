@@ -30,7 +30,7 @@ async function sendTelegram(message) {
     const body = JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' });
     const req = https.request({
       hostname: 'api.telegram.org',
-      path: `/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      path: `/bot${encodeURIComponent(TELEGRAM_BOT_TOKEN)}/sendMessage`,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     }, res => {
@@ -206,7 +206,8 @@ async function getCalendarEvents() {
 }
 
 function formatCalendarSection(events) {
-  if (!events) return '';
+  // null, undefined, 빈 배열 모두 방어
+  if (events == null || !Array.isArray(events)) return '';
 
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
@@ -329,9 +330,11 @@ async function findLatestDayPage(monthPageId) {
 }
 
 async function findPrevMonthLatestDayPage(year, month) {
-  const prevMonth = month === '01'
-    ? { year: String(Number(year) - 1), month: '12' }
-    : { year, month: String(Number(month) - 1).padStart(2, '0') };
+  const y = Number(year);
+  const m = Number(month);
+  const prevMonth = m === 1
+    ? { year: String(y - 1), month: '12' }
+    : { year: String(y), month: String(m - 1).padStart(2, '0') };
   const prevYearPage = await findPage(ROOT_PAGE_ID, `${prevMonth.year}년`);
   if (!prevYearPage) return null;
   const prevMonthPage = await findPage(prevYearPage.id, `${prevMonth.year}_${prevMonth.month}`);
@@ -497,7 +500,7 @@ async function main() {
     ]);
 
     const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : '날씨 정보를 가져오지 못했어요 😢';
-    const calendarEvents = calendarResult.status === 'fulfilled' ? calendarResult.value : null;
+    const calendarEvents = calendarResult.status === 'fulfilled' && Array.isArray(calendarResult.value) ? calendarResult.value : null;
     const calendarText = formatCalendarSection(calendarEvents);
 
     const yearPageId = await findOrCreatePage(ROOT_PAGE_ID, `${year}년`);

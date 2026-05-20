@@ -8,6 +8,11 @@ const ROOT_PAGE_ID = process.env.DAILY_LOG_PAGE_ID;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+const REQUIRED_ENV = ['NOTION_TOKEN', 'DAILY_LOG_PAGE_ID', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+for (const key of REQUIRED_ENV) {
+  if (!process.env[key]) { console.error(`❌ 환경변수 누락: ${key}`); process.exit(1); }
+}
+
 const LAT = 37.4449;
 const LON = 127.1388;
 
@@ -56,13 +61,26 @@ async function getWeather() {
 
 function getKSTDate() {
   const now = new Date();
-  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  const year = String(kst.getUTCFullYear());
-  const month = String(kst.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(kst.getUTCDate()).padStart(2, '0');
-  const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
-  const dayName = dayNames[kst.getUTCDay()];
-  return { year, month, day, dayName };
+  const parts = new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
+  }).formatToParts(now);
+  const get = type => parts.find(p => p.type === type)?.value ?? '';
+  return { year: get('year'), month: get('month'), day: get('day'), dayName: get('weekday').replace('요일', '') };
+}
+
+async function withRetry(fn, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (i < retries - 1 && (e.code === 'rate_limited' || e.status === 429)) {
+        console.warn(`⏳ Rate limit 감지. ${i + 1}초 후 재시도...`);
+        await new Promise(r => setTimeout(r, (i + 1) * 1000));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -83,9 +101,8 @@ async function getCalendarEvents() {
     await client.login();
     const calendars = await client.fetchCalendars();
 
-    const now = new Date();
-    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-    const todayStart = new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()));
+    const { year, month, day } = getKSTDate();
+    const todayStart = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
     const rangeEnd = new Date(todayStart.getTime() + 4 * 24 * 60 * 60 * 1000);
 
     const events = [];
@@ -96,7 +113,7 @@ async function getCalendarEvents() {
           calendar,
           timeRange: { start: todayStart.toISOString(), end: rangeEnd.toISOString() },
         });
-      } catch (e) { continue; }
+      } catch (e) { console.warn('캘린더 객체 로드 실패:', calendar.displayName, e.message); continue; }
 
       for (const obj of calObjects) {
         if (!obj.data) continue;
@@ -112,17 +129,18 @@ async function getCalendarEvents() {
                 const startJS = next.toJSDate();
                 if (startJS >= rangeEnd) break;
                 if (startJS >= todayStart) {
+                  const durationSec = event.duration?.toSeconds?.() ?? 0;
                   events.push({
                     summary: event.summary || '(제목 없음)',
                     start: startJS,
-                    end: new Date(startJS.getTime() + event.duration.toSeconds() * 1000),
+                    end: new Date(startJS.getTime() + durationSec * 1000),
                     allDay: next.isDate,
                   });
                 }
               }
             } else {
               const startJS = event.startDate.toJSDate();
-              const endJS = event.endDate.toJSDate();
+              const endJS = event.endDate?.toJSDate() ?? startJS;
               if (startJS < rangeEnd && endJS > todayStart) {
                 events.push({
                   summary: event.summary || '(제목 없음)',
@@ -133,7 +151,7 @@ async function getCalendarEvents() {
               }
             }
           }
-        } catch (e) { /* 파싱 오류 무시 */ }
+        } catch (e) { console.warn('iCal 파싱 오류 무시:', e.message); }
       }
     }
 
@@ -152,10 +170,9 @@ async function getCalendarEvents() {
 function formatCalendarSection(events) {
   if (!events) return '';
 
-  const now = new Date();
-  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const { year: fy, month: fm, day: fd } = getKSTDate();
   const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
-  const todayKey = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`;
+  const todayKey = `${fy}-${fm}-${fd}`;
 
   const grouped = {};
   for (const ev of events) {
@@ -219,7 +236,7 @@ async function getChildPages(pageId) {
   const children = [];
   let cursor = undefined;
   while (true) {
-    const res = await notion.blocks.children.list({ block_id: pageId, start_cursor: cursor, page_size: 100 });
+    const res = await withRetry(() => notion.blocks.children.list({ block_id: pageId, start_cursor: cursor, page_size: 100 }));
     for (const block of res.results) {
       if (block.type === 'child_page') children.push({ id: block.id, title: block.child_page.title });
     }
@@ -238,7 +255,7 @@ async function findOrCreatePage(parentId, title) {
   const found = await findPage(parentId, title);
   if (found) { console.log(`✅ 페이지 찾음: ${title}`); return found.id; }
   console.log(`🆕 페이지 생성: ${title}`);
-  const res = await notion.pages.create({ parent: { page_id: parentId }, properties: { title: { title: [{ text: { content: title } }] } } });
+  const res = await withRetry(() => notion.pages.create({ parent: { page_id: parentId }, properties: { title: { title: [{ text: { content: title } }] } } }));
   return res.id;
 }
 
@@ -246,7 +263,7 @@ async function getAllBlocks(pageId) {
   const blocks = [];
   let cursor = undefined;
   while (true) {
-    const res = await notion.blocks.children.list({ block_id: pageId, start_cursor: cursor, page_size: 100 });
+    const res = await withRetry(() => notion.blocks.children.list({ block_id: pageId, start_cursor: cursor, page_size: 100 }));
     blocks.push(...res.results);
     if (!res.has_more) break;
     cursor = res.next_cursor;
@@ -290,7 +307,7 @@ function replaceDateInRichText(richText, { year, month, day, dayName }) {
   return richText.map(rt => {
     const updated = JSON.parse(JSON.stringify(rt));
     if (updated.plain_text && /\d{4}년 \d{2}월 \d{2}일/.test(updated.plain_text)) {
-      if (updated.text) {
+      if (updated.text?.content) {
         updated.text.content = updated.text.content.replace(/\d{4}년 \d{2}월 \d{2}일 .요일/, newDateStr);
       }
     }
@@ -312,10 +329,10 @@ function removeNulls(obj) {
 
 const UNSUPPORTED_TYPES = ['unsupported', 'child_page', 'child_database'];
 
-// todo 항목을 소스에서 DFS 순서로 수집 (Notion append와 별개)
 async function collectTodos(sourceBlocks, addedItems, depth = 0) {
   for (const block of sourceBlocks) {
     if (isCheckedTodo(block)) continue;
+    if (UNSUPPORTED_TYPES.includes(block.type)) continue;
     if (block.type === 'to_do') {
       const text = extractText(block.to_do.rich_text);
       if (text) {
@@ -363,9 +380,10 @@ async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo) {
 
   if (flatBlocks.length === 0) return;
 
-  const res = await notion.blocks.children.append({ block_id: parentId, children: flatBlocks });
+  const res = await withRetry(() => notion.blocks.children.append({ block_id: parentId, children: flatBlocks }));
 
-  for (let i = 0; i < res.results.length; i++) {
+  const count = Math.min(res.results.length, sourceBlocksFiltered.length);
+  for (let i = 0; i < count; i++) {
     const newBlock = res.results[i];
     const srcBlock = sourceBlocksFiltered[i];
     if (srcBlock.has_children) {
@@ -390,10 +408,10 @@ async function appendColumnList(pageId, sourceColumnListId, dateInfo, addedItems
 
   if (columnsForCreation.length < 2) throw new Error('column이 2개 이상 필요합니다.');
 
-  const res = await notion.blocks.children.append({
+  const res = await withRetry(() => notion.blocks.children.append({
     block_id: pageId,
     children: [{ object: 'block', type: 'column_list', column_list: { children: columnsForCreation } }],
-  });
+  }));
 
   const newColumnListId = res.results[0].id;
   const newColumns = await getAllBlocks(newColumnListId);
@@ -403,13 +421,11 @@ async function appendColumnList(pageId, sourceColumnListId, dateInfo, addedItems
     const srcCol = sourceColumnsFiltered[i];
     const placeholders = await getAllBlocks(newCol.id);
     for (const p of placeholders) {
-      try { await notion.blocks.delete({ block_id: p.id }); } catch (e) {}
+      try { await notion.blocks.delete({ block_id: p.id }); } catch (e) { console.warn('블록 삭제 실패:', p.id, e.message); }
     }
     const subBlocks = await getAllBlocks(srcCol.id);
     if (subBlocks.length > 0) {
-      // Notion에 블록 복사
       await appendBlocksRecursive(newCol.id, subBlocks, dateInfo);
-      // todo 항목은 DFS 순서로 별도 수집 (첫 번째 컬럼만)
       if (i === 0) {
         await collectTodos(subBlocks, addedItems);
       }

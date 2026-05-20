@@ -27,11 +27,14 @@
 - `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
 
 ## index.js 주요 구현
-- 시작 시 환경변수 검증
+- 시작 시 필수 환경변수 검증 (`REQUIRED_ENV` 목록)
 - 날씨 + 캘린더 `Promise.all` 병렬 로딩
-- UTC→KST 변환
-- `event.duration` null 안전성 처리
-- `findPrevMonthLatestDayPage` 숫자 타입 안전성
+- `Intl.DateTimeFormat`으로 KST 날짜 계산 (서버 timezone 무관)
+- `event.duration?.toSeconds?.()` null/메서드 안전성 처리
+- `event.endDate?.toJSDate()` null 안전성 처리
+- `withRetry` 헬퍼로 Notion API rate limit 대응 (최대 3회 재시도)
+- `appendBlocksRecursive` 인덱스 안전성 (`Math.min` 사용)
+- `collectTodos`에서 `UNSUPPORTED_TYPES` 블록 건너뜀
 - Notion API로 일일 로그 페이지 생성/업데이트
 
 ## Git Pre-push Hook

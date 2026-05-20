@@ -26,7 +26,18 @@
 - 이전 일 페이지를 복제해서 날짜만 바꿔 새 일 페이지 생성
 - 각 일 페이지 안에 2컬럼 레이아웃 (왼쪽: 할 일, 오른쪽: 프로젝트 현황)
 - 완료된(체크된) to_do 항목은 복사 제외
-- 주말에는 일지 생성 없이 마커 페이지만 생성
+- 주말에는 일지 생성 없이 텔레그램 메시지만 전송
+
+---
+
+## 🚀 첫 실행 전 부트스트랩
+
+스크립트는 **이전 일지를 복제**하는 방식으로 동작합니다. 최초 실행 전 Notion에 첫 번째 일지 페이지를 수동으로 만들어야 합니다.
+
+1. Notion에서 `일일업무일지 > {년}년 > {년}_{월}` 페이지 경로 수동 생성
+2. `{년}_{월}_{일} ({요일})` 형식으로 일 페이지 수동 생성 (예: `2026_05_20 (수)`)
+3. 2컬럼 레이아웃(왼쪽: 할 일, 오른쪽: 프로젝트 현황) 직접 설정
+4. 이후부터는 스크립트가 이 페이지를 기준으로 자동 복제
 
 ---
 
@@ -55,15 +66,27 @@
 ### 평일 중복 실행
 - 동일 메시지 + 마지막 문구: `이미 일지가 있어서 다시 한 번 보내드렸어요~ 📋`
 
-### 주말 최초 실행
+### 주말 실행 (중복 체크 없음)
 - 날씨 + 일정만 전송 (할 일 없음) + `푹 쉬고 충전하는 하루 되세요! 🌿`
+- 중복 여부 관계없이 항상 같은 메시지 전송
 
-### 주말 중복 실행
-- 날씨 + 일정만 전송 + `이미 보내드렸는데 다시 한 번 보내드렸어요~ 😄`
+> ⚠️ GitHub Actions cron은 평일(KST 월~금)만 자동 실행. 주말 메시지는 수동 트리거 시에만 전송됨.
+
+### 에러 발생 시
+```
+😥 앗, 오늘 일지 작성 중에 문제가 생겼어요.
+
+📅 {날짜}
+❌ 오류 내용: {err.message}
+
+확인 부탁드려요!
+```
 
 ---
 
-## ⚙️ 환경변수 (GitHub Secrets)
+## ⚙️ 환경변수
+
+### GitHub Secrets (Actions 워크플로우에서 사용)
 
 | 변수명 | 설명 |
 |--------|------|
@@ -71,8 +94,18 @@
 | `DAILY_LOG_PAGE_ID` | 일일업무일지 페이지 ID (`0a1501a086b945b1b84b7dfc8b44bf52`) |
 | `TELEGRAM_BOT_TOKEN` | 텔레그램 봇 토큰 (@BotFather → /mybots) |
 | `TELEGRAM_CHAT_ID` | 텔레그램 챗 ID (`5515513986`) |
+
+> ⚠️ `APPLE_ID`, `APPLE_APP_PASSWORD`는 현재 워크플로우에 포함되어 있지 않아, Actions 실행 시 캘린더 섹션이 생략됩니다. 로컬 `.env`에서는 동작합니다.
+
+### 로컬 전용 (`.env` + pre-push hook)
+
+| 변수명 | 설명 |
+|--------|------|
 | `APPLE_ID` | Apple ID 이메일 (`leinster92@gmail.com`) |
 | `APPLE_APP_PASSWORD` | Apple 앱 암호 (appleid.apple.com에서 발급) |
+| `GEMINI_API_KEY` | Gemini API 키 (pre-push 코드 리뷰용) |
+| `TELEGRAM_BOT_TOKEN` | 위와 동일 |
+| `TELEGRAM_CHAT_ID` | 위와 동일 |
 
 ---
 
@@ -88,11 +121,14 @@
 
 ---
 
-## ⏰ GitHub Actions 스케줄
+## ⏰ GitHub Actions 워크플로우 (`daily-work-log.yml`)
 
-- **매일 KST 오전 7시** 자동 실행 (평일 + 주말)
-- 수동 실행: `gh workflow run daily-work-log.yml`
-- 사용량 확인: GitHub → Settings → Billing and plans
+- **자동 실행**: KST 월~금 오전 7시 (`cron: '0 22 * * 0-4'` UTC 기준)
+  - UTC 일~목 22:00 = KST 월~금 07:00
+  - 주말은 자동 실행 없음 — 수동 트리거 시 주말 로직 동작
+- **Node.js 버전**: 20
+- **수동 실행**: `gh workflow run daily-work-log.yml`
+- **사용량 확인**: GitHub → Settings → Billing and plans
 
 ---
 
@@ -109,6 +145,33 @@ git add . && git commit -m "커밋 메시지" && git push
 
 ---
 
+## 🔧 Pre-push Hook 설치
+
+레포를 새로 클론하면 `.git/hooks/`는 자동으로 복원되지 않음. 아래 절차로 설치:
+
+```bash
+# 1. pre-push 파일 생성 (아래 내용 붙여넣기)
+cat > .git/hooks/pre-push << 'EOF'
+#!/bin/bash
+echo "🤖 Gemini 코드 리뷰 중..."
+node .git/hooks/review.js
+echo ""
+read -p "❓ 그래도 푸시할까요? (y/n): " answer </dev/tty
+[ "$answer" != "y" ] && echo "🚫 푸시 취소됨" && exit 1
+exit 0
+EOF
+
+# 2. 실행 권한 부여
+chmod +x .git/hooks/pre-push
+
+# 3. review.js 파일은 별도로 복사 (레포에 직접 포함되지 않음)
+```
+
+- `.env`에 `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` 설정 필요
+- push 시 Gemini가 `index.js`를 리뷰하고 Telegram 전송 후 진행 여부 확인
+
+---
+
 ## 🌦 날씨 API
 
 - **Open-Meteo** (무료, 키 불필요)
@@ -121,4 +184,5 @@ git add . && git commit -m "커밋 메시지" && git push
 - **Apple iCloud CalDAV** 연동
 - 오늘 + 앞으로 3일(총 4일) 일정 표시
 - 반복 일정 지원
-- 환경변수 없으면 캘린더 섹션 생략 (에러 없음)
+- `APPLE_ID` / `APPLE_APP_PASSWORD` 없으면 캘린더 섹션 생략 (에러 없음)
+- GitHub Actions 실행 시에는 해당 env가 워크플로우에 미포함되어 항상 생략됨

@@ -1,0 +1,48 @@
+# notion-daily-log
+
+## 프로젝트 개요
+- **경로**: `/Users/leinster/Documents/Claude/Notion/notion-daily-log`
+- **GitHub**: `korleinster/notion-daily-log`
+- **런타임**: Node.js
+- **목적**: 날씨, 캘린더 이벤트 등 일일 정보를 Notion에 자동 로깅
+
+## 환경변수 (`.env` 필수)
+
+### index.js (메인 스크립트)
+- `NOTION_TOKEN` — Notion Integration 토큰
+- `DAILY_LOG_PAGE_ID` — 일일업무일지 페이지 ID (`0a1501a086b945b1b84b7dfc8b44bf52`)
+- `TELEGRAM_BOT_TOKEN` — 텔레그램 봇 토큰
+- `TELEGRAM_CHAT_ID` — 텔레그램 챗 ID (`5515513986`)
+- `APPLE_ID` — Apple ID 이메일
+- `APPLE_APP_PASSWORD` — Apple 앱 암호
+
+### review.js (pre-push 코드리뷰)
+- `GEMINI_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+
+## 핵심 파일
+- `index.js` — 메인 로직
+- `.git/hooks/pre-push` — bash 진입점
+- `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
+
+## index.js 주요 구현
+- 시작 시 환경변수 검증
+- 날씨 + 캘린더 `Promise.all` 병렬 로딩
+- UTC→KST 변환
+- `event.duration` null 안전성 처리
+- `findPrevMonthLatestDayPage` 숫자 타입 안전성
+- Notion API로 일일 로그 페이지 생성/업데이트
+
+## Git Pre-push Hook
+push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Telegram으로 전송
+- 모델: `gemini-2.5-flash-lite` (free tier, 속도 최적화)
+- 메시지 청크: 최대 3800자, `N/M` 번호 표시
+- bash hook에서 Node.js 파일 분리 (shell escaping 문제 회피)
+
+## 주의사항
+- `encodeURIComponent`를 Telegram 봇 토큰 전체에 적용하면 콜론이 깨짐 — 적용 금지
+- Gemini는 Default Project 사용 (project-specific quota가 0일 수 있음)
+- `gemini-2.5-flash`는 thinking 모드로 느림 → `flash-lite` 사용
+- iCloud Drive 특성상 Git 명령이 hang할 수 있음 — 파일 로컬 가용 여부 먼저 확인
+- README 수정 시 Claude 프로젝트 지식에도 반영 필요

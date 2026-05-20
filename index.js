@@ -183,7 +183,7 @@ function formatCalendarSection(events) {
   }
 
   const todayEvents = grouped[todayKey] || [];
-  const upcomingKeys = Object.keys(grouped).sort().filter(k => k !== todayKey);
+  const todayDate = new Date(Date.UTC(Number(fy), Number(fm) - 1, Number(fd)));
 
   const lines = [];
 
@@ -206,21 +206,24 @@ function formatCalendarSection(events) {
     }
   }
 
-  // 다가오는 일정
+  // 다가오는 일정 (항상 3일치 표시)
   lines.push('\n<b>📅 다가오는 일정</b>');
-  if (upcomingKeys.length === 0) {
-    lines.push('일정 없음');
-  } else {
-    for (const dateKey of upcomingKeys) {
-      const [y, m, d] = dateKey.split('-').map(Number);
-      const dow = dayNames[new Date(Date.UTC(y, m-1, d)).getUTCDay()];
-      for (const { ev, evKST } of grouped[dateKey]) {
+  for (let offset = 1; offset <= 3; offset++) {
+    const d = new Date(todayDate.getTime() + offset * 24 * 60 * 60 * 1000);
+    const dateKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+    const [y, m, day] = dateKey.split('-').map(Number);
+    const dow = dayNames[new Date(Date.UTC(y, m-1, day)).getUTCDay()];
+    const dayEvents = grouped[dateKey] || [];
+    if (dayEvents.length === 0) {
+      lines.push(`• ${m}/${day} (${dow}) 일정 없음`);
+    } else {
+      for (const { ev, evKST } of dayEvents) {
         if (ev.allDay) {
-          lines.push(`• ${m}/${d} (${dow}) ${ev.summary} 🔵 하루종일`);
+          lines.push(`• ${m}/${day} (${dow}) ${ev.summary} 🔵 하루종일`);
         } else {
           const hh = String(evKST.getUTCHours()).padStart(2,'0');
           const mm2 = String(evKST.getUTCMinutes()).padStart(2,'0');
-          lines.push(`• ${m}/${d} (${dow}) ${hh}:${mm2} ${ev.summary}`);
+          lines.push(`• ${m}/${day} (${dow}) ${hh}:${mm2} ${ev.summary}`);
         }
       }
     }

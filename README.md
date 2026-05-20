@@ -125,8 +125,8 @@
 
 ## ⏰ GitHub Actions 워크플로우 (`daily-work-log.yml`)
 
-- **자동 실행**: KST 월~금 오전 7시 (`cron: '0 22 * * 0-4'` UTC 기준)
-  - UTC 일~목 22:00 = KST 월~금 07:00
+- **자동 실행**: KST 월~금 오전 5시 (`cron: '0 20 * * 0-4'` UTC 기준)
+  - UTC 일~목 20:00 = KST 월~금 05:00
   - 주말은 자동 실행 없음 — 수동 트리거 시 주말 로직 동작
 - **Node.js 버전**: 20
 - **수동 실행**: `gh workflow run daily-work-log.yml`

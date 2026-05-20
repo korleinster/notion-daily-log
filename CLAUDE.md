@@ -35,14 +35,13 @@
 - Notion API로 일일 로그 페이지 생성/업데이트
 
 ## Git Pre-push Hook
-push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Telegram으로 전송
+push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채팅창에 출력
 - 모델: `gemini-2.5-flash-lite` (free tier, 속도 최적화)
-- 메시지 청크: 최대 3800자, `N/M` 번호 표시
 - bash hook에서 Node.js 파일 분리 (shell escaping 문제 회피)
+- Telegram 전송 없음 — stdout으로만 출력 (Claude Bash 출력에 표시됨)
 
 ## 주의사항
-- `encodeURIComponent`를 Telegram 봇 토큰 전체에 적용하면 콜론이 깨짐 — 적용 금지
 - Gemini는 Default Project 사용 (project-specific quota가 0일 수 있음)
 - `gemini-2.5-flash`는 thinking 모드로 느림 → `flash-lite` 사용
 - iCloud Drive 특성상 Git 명령이 hang할 수 있음 — 파일 로컬 가용 여부 먼저 확인
-- README 수정 시 Claude 프로젝트 지식에도 반영 필요
+- README 수정 시 CLAUDE.md에도 반영 필요

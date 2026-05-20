@@ -155,9 +155,6 @@ cat > .git/hooks/pre-push << 'EOF'
 #!/bin/bash
 echo "🤖 Gemini 코드 리뷰 중..."
 node .git/hooks/review.js
-echo ""
-read -p "❓ 그래도 푸시할까요? (y/n): " answer </dev/tty
-[ "$answer" != "y" ] && echo "🚫 푸시 취소됨" && exit 1
 exit 0
 EOF
 
@@ -167,8 +164,8 @@ chmod +x .git/hooks/pre-push
 # 3. review.js 파일은 별도로 복사 (레포에 직접 포함되지 않음)
 ```
 
-- `.env`에 `GEMINI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` 설정 필요
-- push 시 Gemini가 `index.js`를 리뷰하고 Telegram 전송 후 진행 여부 확인
+- `.env`에 `GEMINI_API_KEY` 설정 필요
+- push 시 Gemini가 `index.js`를 리뷰하고 결과를 stdout으로 출력 (Claude 채팅창에 표시)
 
 ---
 

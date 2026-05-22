@@ -333,6 +333,72 @@ function isCheckedTodo(block) {
   return block.type === 'to_do' && block.to_do?.checked === true;
 }
 
+// MMDD or MMDD~MMDD 패턴에서 마지막 날짜 반환 (연차 만료 판단용)
+function parseLeaveDateRange(text, year) {
+  const Y = Number(year);
+  const rangeMatch = text.match(/^(\d{4})~(\d{4})/);
+  if (rangeMatch) {
+    const em = parseInt(rangeMatch[2].slice(0, 2));
+    const ed = parseInt(rangeMatch[2].slice(2, 4));
+    return { end: ed ? new Date(Date.UTC(Y, em - 1, ed)) : new Date(Date.UTC(Y, em, 0)) };
+  }
+  const singleMatch = text.match(/^(\d{4})/);
+  if (singleMatch) {
+    const mm = parseInt(singleMatch[1].slice(0, 2));
+    const dd = parseInt(singleMatch[1].slice(2, 4));
+    return { end: dd ? new Date(Date.UTC(Y, mm - 1, dd)) : new Date(Date.UTC(Y, mm, 0)) };
+  }
+  return null;
+}
+
+// "최예균(역할), 우양권(역할)" 형태에서 이름 배열 추출
+function parseAssigneesFromText(text) {
+  const clean = text.replace(/\*+/g, '').trim();
+  const names = [];
+  let depth = 0, current = '';
+  for (const ch of clean) {
+    if (ch === '(') { depth++; current += ch; }
+    else if (ch === ')') { depth--; current += ch; }
+    else if (ch === ',' && depth === 0) {
+      const m = current.trim().match(/^([가-힣]{2,4})/);
+      if (m) names.push(m[1]);
+      current = '';
+    } else { current += ch; }
+  }
+  const m = current.trim().match(/^([가-힣]{2,4})/);
+  if (m) names.push(m[1]);
+  return names;
+}
+
+const MILESTONE_RE = /^(\d{4,6}|미정)\s*[-–—]/;
+
+// 마일스톤 블록을 재귀 스캔해 담당자별 일감 수 집계
+async function scanMilestoneAssignees(blockId, counts = {}) {
+  const blocks = await getAllBlocks(blockId);
+  for (const block of blocks) {
+    if (block.type !== 'bulleted_list_item') continue;
+    const text = extractText(block.bulleted_list_item.rich_text);
+    if (text === '📊 담당자 현황') continue;
+
+    if (MILESTONE_RE.test(text) && block.has_children) {
+      const children = await getAllBlocks(block.id);
+      if (children.length > 0) {
+        const fc = children[0];
+        const fcText = fc[fc.type]?.rich_text ? extractText(fc[fc.type].rich_text) : '';
+        const fcClean = fcText.replace(/\*+/g, '').trim();
+        if (/^[가-힣]{2,4}/.test(fcClean)) {
+          for (const name of parseAssigneesFromText(fcText)) {
+            counts[name] = (counts[name] || 0) + 1;
+          }
+        }
+      }
+    } else if (!MILESTONE_RE.test(text) && block.has_children) {
+      await scanMilestoneAssignees(block.id, counts);
+    }
+  }
+  return counts;
+}
+
 function removeNulls(obj) {
   if (typeof obj !== 'object' || obj === null) return obj;
   if (Array.isArray(obj)) return obj.map(removeNulls);
@@ -365,6 +431,8 @@ function convertBlockFlat(block, dateInfo) {
   const type = block.type;
   if (UNSUPPORTED_TYPES.includes(type)) return null;
   if (!block[type]) return { object: 'block', type: 'paragraph', paragraph: { rich_text: [] } };
+  // 자동 생성된 담당자 현황은 복사 제외 (매일 새로 생성)
+  if (block[type]?.rich_text && extractText(block[type].rich_text) === '📊 담당자 현황') return null;
 
   const blockData = removeNulls(JSON.parse(JSON.stringify(block[type])));
 
@@ -380,11 +448,20 @@ function convertBlockFlat(block, dateInfo) {
   return { object: 'block', type, [type]: blockData };
 }
 
-async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo) {
+async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo, filterPastLeaves = false) {
+  const today = new Date(Date.UTC(Number(dateInfo.year), Number(dateInfo.month) - 1, Number(dateInfo.day)));
   const flatBlocks = [];
   const sourceBlocksFiltered = [];
 
   for (const src of sourceBlocks) {
+    // 연차 섹션 내 지난 날짜 항목 제거
+    if (filterPastLeaves) {
+      const t = src.type;
+      const text = src[t]?.rich_text ? extractText(src[t].rich_text) : '';
+      const dateRange = parseLeaveDateRange(text, dateInfo.year);
+      if (dateRange && dateRange.end < today) continue;
+    }
+
     const converted = convertBlockFlat(src, dateInfo);
     if (converted) {
       flatBlocks.push(converted);
@@ -403,7 +480,9 @@ async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo) {
     if (srcBlock.has_children) {
       const subBlocks = await getAllBlocks(srcBlock.id);
       if (subBlocks.length > 0) {
-        await appendBlocksRecursive(newBlock.id, subBlocks, dateInfo);
+        const t = srcBlock.type;
+        const text = srcBlock[t]?.rich_text ? extractText(srcBlock[t].rich_text) : '';
+        await appendBlocksRecursive(newBlock.id, subBlocks, dateInfo, text === '연차');
       }
     }
   }
@@ -442,6 +521,29 @@ async function appendColumnList(pageId, sourceColumnListId, dateInfo, addedItems
       await appendBlocksRecursive(newCol.id, subBlocks, dateInfo);
       if (i === 0) {
         await collectTodos(subBlocks, addedItems);
+      }
+      if (i === 1) {
+        // 오른쪽(마일스톤) 컬럼: 담당자별 일감 수 집계 후 현황 블록 추가
+        const counts = await scanMilestoneAssignees(srcCol.id);
+        const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        if (entries.length > 0) {
+          const headerRes = await withRetry(() => notion.blocks.children.append({
+            block_id: newCol.id,
+            children: [{
+              object: 'block', type: 'bulleted_list_item',
+              bulleted_list_item: {
+                rich_text: [{ type: 'text', text: { content: '📊 담당자 현황' }, annotations: { bold: true, color: 'blue_background' } }],
+              },
+            }],
+          }));
+          await withRetry(() => notion.blocks.children.append({
+            block_id: headerRes.results[0].id,
+            children: entries.map(([name, count]) => ({
+              object: 'block', type: 'bulleted_list_item',
+              bulleted_list_item: { rich_text: [{ type: 'text', text: { content: `${name} ${count}건` } }] },
+            })),
+          }));
+        }
       }
     }
   }

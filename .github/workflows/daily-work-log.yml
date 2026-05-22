@@ -2,8 +2,8 @@ name: Daily Work Log
 
 on:
   schedule:
-    # KST 오전 7시 = UTC 전날 22:00, 매일
-    - cron: '0 22 * * *'
+    # KST 오전 5시 = UTC 전날 20:00, 평일(월~금)만
+    - cron: '0 20 * * 0-4'
   workflow_dispatch:
 
 jobs:

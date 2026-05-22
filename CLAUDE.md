@@ -23,6 +23,7 @@
 
 ## 핵심 파일
 - `index.js` — 메인 로직
+- `.github/workflows/daily-work-log.yml` — GitHub Actions 워크플로우 (KST 05:00, 평일만)
 - `.git/hooks/pre-push` — bash 진입점
 - `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
 
@@ -48,3 +49,4 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - `gemini-2.5-flash`는 thinking 모드로 느림 → `flash-lite` 사용
 - iCloud Drive 특성상 Git 명령이 hang할 수 있음 — 파일 로컬 가용 여부 먼저 확인
 - README 수정 시 CLAUDE.md에도 반영 필요
+- 워크플로우 파일은 `.github/workflows/daily-work-log.yml` 하나만 존재 (루트의 `daily-work-log.yml`은 삭제됨 — GitHub Actions는 `.github/workflows/`만 읽음)

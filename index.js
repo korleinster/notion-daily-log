@@ -27,7 +27,15 @@ async function sendTelegram(message) {
     }, res => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(JSON.parse(data)));
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (!parsed.ok) reject(new Error(`Telegram API 오류: ${parsed.description}`));
+          else resolve(parsed);
+        } catch (e) {
+          reject(new Error(`Telegram 응답 파싱 실패: ${data.slice(0, 100)}`));
+        }
+      });
     });
     req.on('error', reject);
     req.write(body);
@@ -40,7 +48,10 @@ async function httpGet(hostname, path) {
     const req = https.request({ hostname, path, method: 'GET' }, res => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(JSON.parse(data)));
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch (e) { reject(new Error(`JSON 파싱 실패 (${hostname}): ${data.slice(0, 100)}`)); }
+      });
     });
     req.on('error', reject);
     req.end();

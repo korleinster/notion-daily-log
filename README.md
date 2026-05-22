@@ -95,16 +95,14 @@
 | `NOTION_TOKEN` | Notion Integration 토큰 (notion.so/my-integrations) |
 | `DAILY_LOG_PAGE_ID` | 일일업무일지 페이지 ID (`0a1501a086b945b1b84b7dfc8b44bf52`) |
 | `TELEGRAM_BOT_TOKEN` | 텔레그램 봇 토큰 (@BotFather → /mybots) |
-| `TELEGRAM_CHAT_ID` | 텔레그램 챗 ID (`5515513986`) |
-
-> ⚠️ `APPLE_ID`, `APPLE_APP_PASSWORD`는 현재 워크플로우에 포함되어 있지 않아, Actions 실행 시 캘린더 섹션이 생략됩니다. 로컬 `.env`에서는 동작합니다.
+| `TELEGRAM_CHAT_ID` | 텔레그램 채널 ID (`-1003908956979`, "Leinster Daily" 채널) |
+| `APPLE_ID` | Apple ID 이메일 (iCloud 캘린더 연동, 없으면 캘린더 섹션 생략) |
+| `APPLE_APP_PASSWORD` | Apple 앱 암호 (iCloud 캘린더 연동, 없으면 캘린더 섹션 생략) |
 
 ### 로컬 전용 (`.env` + pre-push hook)
 
 | 변수명 | 설명 |
 |--------|------|
-| `APPLE_ID` | Apple ID 이메일 (`leinster92@gmail.com`) |
-| `APPLE_APP_PASSWORD` | Apple 앱 암호 (appleid.apple.com에서 발급) |
 | `GEMINI_API_KEY` | Gemini API 키 (pre-push 코드 리뷰용) |
 | `TELEGRAM_BOT_TOKEN` | 위와 동일 |
 | `TELEGRAM_CHAT_ID` | 위와 동일 |

@@ -1,6 +1,34 @@
 # 📓 Notion Daily Log Bot
 
-매일 아침 Notion에 일지를 자동 생성하고, 날씨 + 캘린더 일정 + 오늘의 할 일을 텔레그램으로 전송하는 자동화 봇입니다.
+> 매일 아침, Notion 일지가 자동으로 만들어지고 날씨·캘린더·할 일이 텔레그램으로 날아옵니다.
+
+**Notion Daily Log Bot** is a personal automation tool that runs every weekday morning via GitHub Actions.  
+It creates a new daily log page in Notion (cloned from the previous day), fetches weather data and iCloud Calendar events, then sends a morning briefing to a Telegram channel — all without touching your computer.
+
+[![Node.js](https://img.shields.io/badge/Node.js-20-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-automated-2088FF?logo=github-actions&logoColor=white)](https://github.com/features/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=github-sponsors)](https://github.com/sponsors/korleinster)
+
+---
+
+## ✨ 주요 기능
+
+| 기능 | 설명 |
+|------|------|
+| 📄 **Notion 일지 자동 생성** | 전날 페이지를 복제해 새 일지 생성, 완료된 할 일은 제외 |
+| 🌤 **날씨 정보** | Open-Meteo API (무료·키 불필요)로 오늘 날씨 자동 수집 |
+| 📆 **캘린더 연동** | iCloud CalDAV로 오늘 + 앞으로 3일 일정 표시, 반복 일정 지원 |
+| 📬 **텔레그램 알림** | 날씨·일정·할 일을 매일 아침 채널로 전송 |
+| ⏰ **완전 자동화** | GitHub Actions로 평일 KST 05:00 자동 실행, 수동 트리거 가능 |
+
+---
+
+## ☕ 후원하기
+
+이 프로젝트가 도움이 됐다면 후원해주세요. 개발 지속에 큰 힘이 됩니다!
+
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor_on_GitHub-%E2%9D%A4-ea4aaa?style=for-the-badge&logo=github-sponsors)](https://github.com/sponsors/korleinster)
 
 ---
 

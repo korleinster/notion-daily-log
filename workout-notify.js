@@ -188,14 +188,15 @@ async function main() {
     const newRows = todayRows.slice(prevCount);
     for (const row of newRows) {
       const cells = row.table_row?.cells ?? [];
-      const dateCell   = cellText(cells[0]);  // 날짜
-      const typeCell   = cellText(cells[1]);  // 운동 종류
-      const timeCell   = cellText(cells[2]);  // 시간
-      const levelCell  = cellText(cells[3]);  // 강도
-      const avgBPM     = cellText(cells[4]);  // 평균BPM
-      const maxBPM     = cellText(cells[5]);  // 최고BPM
-      const kcalCell   = cellText(cells[6]);  // 칼로리
-      const weightCell = cellText(cells[7]);  // 체중
+      const dateCell     = cellText(cells[0]);  // 날짜
+      const typeCell     = cellText(cells[1]);  // 운동 종류
+      const timeCell     = cellText(cells[2]);  // 시간
+      const levelCell    = cellText(cells[3]);  // 강도
+      const avgBPM       = cellText(cells[4]);  // 평균BPM
+      const maxBPM       = cellText(cells[5]);  // 최고BPM
+      const kcalCell     = cellText(cells[6]);  // 칼로리
+      const weightCell   = cellText(cells[7]);  // 체중
+      const feedbackCell = cellText(cells[9]);  // 트레이너 피드백
 
       const parts = [];
       if (typeCell)  parts.push(typeCell);
@@ -207,13 +208,14 @@ async function main() {
                 : maxBPM ? `최고BPM ${maxBPM}` : '';
       if (bpm) parts.push(bpm);
 
-      const summaryLine = parts.join(' · ');
-      const weightLine  = weightCell ? `\n⚖️ 체중: ${weightCell}` : '';
+      const summaryLine  = parts.join(' · ');
+      const weightLine   = weightCell   ? `\n⚖️ 체중: ${weightCell}` : '';
+      const feedbackLine = feedbackCell ? `\n\n🤖 트레이너 피드백\n${feedbackCell}` : '';
 
       const msg =
         `💪 운동 기록이 추가됐어요!\n\n` +
         `📅 ${dateCell}\n` +
-        `🏋️ ${summaryLine}${weightLine}`;
+        `🏋️ ${summaryLine}${weightLine}${feedbackLine}`;
 
       console.log('📨 Telegram 전송 중...');
       await sendTelegram(msg);

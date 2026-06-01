@@ -19,8 +19,11 @@ for (const key of REQUIRED_ENV) {
 const notion = new Client({ auth: NOTION_TOKEN });
 const STATE_FILE = path.join(__dirname, '.workout-notify-state.json');
 
-// 차트 블록 식별자 (Notion 캡션으로 구분)
-const CHART_CAPTION = '📊 월간 운동 현황';
+// 차트 블록 캡션 식별자
+const CHART_CAPTIONS = {
+  weight:    '📊 체중 변화',
+  intensity: '📊 운동 강도',
+};
 
 // ── 헬퍼 함수 ─────────────────────────────────────────────────────────────────
 
@@ -154,8 +157,8 @@ async function createChartUrl(chartConfig) {
   });
 }
 
-// dataRows(table_row 배열)에서 차트 config 생성 — 체중 추이 + 목표선
-function buildChartConfig(dataRows, monthLabel) {
+// ── 차트 1: 체중 추이 + 목표선 ───────────────────────────────────────────────
+function buildWeightChartConfig(dataRows, monthLabel) {
   const labels = [], weights = [];
 
   for (const row of dataRows) {
@@ -223,52 +226,150 @@ function buildChartConfig(dataRows, monthLabel) {
   };
 }
 
-// 월 페이지 최상단 차트 블록 삽입/갱신
+// ── 차트 2: 칼로리(막대) + 평균BPM(선) ──────────────────────────────────────
+function buildIntensityChartConfig(dataRows, monthLabel) {
+  const labels = [], calories = [], avgBPMs = [];
+
+  for (const row of dataRows) {
+    const cells = row.table_row?.cells ?? [];
+    labels.push(cellText(cells[0]));
+    const kcalRaw = cellText(cells[6]).replace(/[^0-9]/g, '');
+    const bpmRaw  = cellText(cells[4]).replace(/[^0-9]/g, '');
+    calories.push(kcalRaw ? parseInt(kcalRaw) : null);
+    avgBPMs.push(bpmRaw  ? parseInt(bpmRaw)  : null);
+  }
+
+  const validCal = calories.filter(c => c !== null);
+  const validBPM = avgBPMs.filter(b => b !== null);
+  const calMin = validCal.length ? Math.floor(Math.min(...validCal) * 0.85) : 0;
+  const calMax = validCal.length ? Math.ceil(Math.max(...validCal)  * 1.12) : 500;
+  const bpmMin = validBPM.length ? Math.floor(Math.min(...validBPM) * 0.95) : 100;
+  const bpmMax = validBPM.length ? Math.ceil(Math.max(...validBPM)  * 1.05) : 180;
+
+  return {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'bar',
+          label: '칼로리(kcal)',
+          data: calories,
+          backgroundColor: 'rgba(251, 191, 36, 0.75)',
+          borderColor:     'rgba(245, 158, 11, 1)',
+          borderWidth: 1,
+          yAxisID: 'y',
+          order: 2,
+        },
+        {
+          type: 'line',
+          label: '평균 BPM',
+          data: avgBPMs,
+          borderColor:          'rgba(239, 68, 68, 1)',
+          backgroundColor:      'transparent',
+          pointBackgroundColor: 'rgba(239, 68, 68, 1)',
+          pointBorderColor:     '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 6,
+          fill: false,
+          tension: 0.3,
+          spanGaps: true,
+          yAxisID: 'y1',
+          order: 1,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        title: {
+          display: true,
+          text: `${monthLabel} 운동 강도`,
+          font: { size: 15, weight: 'bold' },
+          padding: { bottom: 10 },
+        },
+        legend: { position: 'top' },
+      },
+      scales: {
+        y: {
+          type: 'linear',
+          position: 'left',
+          min: calMin,
+          max: calMax,
+          title: { display: true, text: '칼로리(kcal)' },
+        },
+        y1: {
+          type: 'linear',
+          position: 'right',
+          min: bpmMin,
+          max: bpmMax,
+          title: { display: true, text: '평균 BPM' },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    },
+  };
+}
+
+// 이미지 블록 생성 헬퍼
+function makeImageBlock(url, caption) {
+  return {
+    type: 'image',
+    image: {
+      type: 'external',
+      external: { url },
+      caption: [{ type: 'text', text: { content: caption } }],
+    },
+  };
+}
+
+// 월 페이지에 차트 2개 삽입/갱신 (체중 → 강도 순)
 async function updateMonthlyChart(monthPageId, dataRows, monthLabel) {
   if (dataRows.length === 0) return;
 
-  console.log('📊 차트 생성 중...');
-  const chartUrl = await createChartUrl(buildChartConfig(dataRows, monthLabel));
+  console.log('📊 차트 2개 생성 중...');
+  const [weightUrl, intensityUrl] = await Promise.all([
+    createChartUrl(buildWeightChartConfig(dataRows, monthLabel)),
+    createChartUrl(buildIntensityChartConfig(dataRows, monthLabel)),
+  ]);
   console.log('📊 차트 URL 생성 완료');
 
-  // 현재 페이지 블록 목록
   const blocks = await getAllBlocks(monthPageId);
 
-  // 기존 차트 블록 탐색 (캡션으로 식별)
-  const chartIdx = blocks.findIndex(b => {
+  // 기존 차트 블록 모두 찾기 (캡션에 📊 포함 또는 구버전 캡션 포함)
+  const existingCharts = blocks.filter(b => {
     if (b.type !== 'image') return false;
     const cap = (b.image?.caption ?? []).map(c => c.plain_text ?? '').join('');
-    return cap.includes(CHART_CAPTION);
+    return cap.startsWith('📊');
   });
 
-  let insertAfterBlockId;
-
-  if (chartIdx !== -1) {
-    // 차트 직전 블록을 삽입 기준으로 기억한 뒤 삭제
-    insertAfterBlockId = chartIdx > 0 ? blocks[chartIdx - 1].id : null;
-    await withRetry(() => notion.blocks.delete({ block_id: blocks[chartIdx].id }));
-    console.log('🗑️ 기존 차트 삭제');
+  // 삽입 기준: 첫 번째 기존 차트 직전 블록 (없으면 테이블 직전)
+  let insertAfterBlockId = null;
+  if (existingCharts.length > 0) {
+    const firstIdx = blocks.findIndex(b => b.id === existingCharts[0].id);
+    insertAfterBlockId = firstIdx > 0 ? blocks[firstIdx - 1].id : null;
+    for (const chart of existingCharts) {
+      await withRetry(() => notion.blocks.delete({ block_id: chart.id }));
+    }
+    console.log(`🗑️ 기존 차트 ${existingCharts.length}개 삭제`);
   } else {
-    // 첫 삽입: 테이블 직전 블록 다음에 끼워 넣기
     const tableIdx = blocks.findIndex(b => b.type === 'table');
     insertAfterBlockId = tableIdx > 0 ? blocks[tableIdx - 1].id : null;
   }
 
-  const appendParams = {
-    block_id: monthPageId,
-    children: [{
-      type: 'image',
-      image: {
-        type: 'external',
-        external: { url: chartUrl },
-        caption: [{ type: 'text', text: { content: CHART_CAPTION } }],
-      },
-    }],
-  };
-  if (insertAfterBlockId) appendParams.after = insertAfterBlockId;
+  // 체중 차트 삽입
+  const weightParams = { block_id: monthPageId, children: [makeImageBlock(weightUrl, CHART_CAPTIONS.weight)] };
+  if (insertAfterBlockId) weightParams.after = insertAfterBlockId;
+  const weightRes = await withRetry(() => notion.blocks.children.append(weightParams));
+  console.log('✅ 체중 차트 삽입');
 
-  await withRetry(() => notion.blocks.children.append(appendParams));
-  console.log('✅ 차트 업데이트 완료');
+  // 강도 차트 삽입 (체중 차트 바로 다음)
+  const intensityParams = {
+    block_id: monthPageId,
+    after: weightRes.results[0].id,
+    children: [makeImageBlock(intensityUrl, CHART_CAPTIONS.intensity)],
+  };
+  await withRetry(() => notion.blocks.children.append(intensityParams));
+  console.log('✅ 운동 강도 차트 삽입');
 }
 
 // ── 메인 ──────────────────────────────────────────────────────────────────────

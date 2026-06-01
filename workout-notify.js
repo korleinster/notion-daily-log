@@ -131,7 +131,7 @@ function writeState(date, count) {
 
 async function createChartUrl(chartConfig) {
   return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({ chart: chartConfig, width: 700, height: 320, backgroundColor: 'white' });
+    const payload = JSON.stringify({ chart: chartConfig, width: 700, height: 320, backgroundColor: 'white', version: 3 });
     const req = https.request({
       hostname: 'quickchart.io',
       path: '/chart/create',

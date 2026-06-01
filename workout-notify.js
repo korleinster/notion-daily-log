@@ -154,48 +154,50 @@ async function createChartUrl(chartConfig) {
   });
 }
 
-// dataRows(table_row 배열)에서 차트 config 생성
+// dataRows(table_row 배열)에서 차트 config 생성 — 체중 추이 + 목표선
 function buildChartConfig(dataRows, monthLabel) {
-  const labels = [], calories = [], weights = [];
+  const labels = [], weights = [];
 
   for (const row of dataRows) {
     const cells = row.table_row?.cells ?? [];
     labels.push(cellText(cells[0]));
-
-    const kcalRaw = cellText(cells[6]).replace(/[^0-9]/g, '');
-    const wtRaw   = cellText(cells[7]).replace(/[^0-9.]/g, '');
-    calories.push(kcalRaw ? parseInt(kcalRaw)   : null);
-    weights.push(wtRaw   ? parseFloat(wtRaw) : null);
+    const wtRaw = cellText(cells[7]).replace(/[^0-9.]/g, '');
+    weights.push(wtRaw ? parseFloat(wtRaw) : null);
   }
 
+  // Y축 범위: 목표(80kg) 포함, 현재 체중 위로 여유
+  const valid = weights.filter(w => w !== null);
+  const minW = valid.length > 0 ? Math.min(...valid) : 85;
+  const maxW = valid.length > 0 ? Math.max(...valid) : 90;
+  const yMin = Math.floor(Math.min(79, minW) - 0.5);
+  const yMax = Math.ceil(maxW + 1.5);
+
   return {
-    type: 'bar',
+    type: 'line',
     data: {
       labels,
       datasets: [
         {
-          type: 'bar',
-          label: '칼로리(kcal)',
-          data: calories,
-          backgroundColor: 'rgba(99, 179, 237, 0.75)',
-          borderColor: 'rgba(66, 153, 225, 1)',
-          borderWidth: 1,
-          yAxisID: 'y',
-          order: 2,
-        },
-        {
-          type: 'line',
           label: '체중(kg)',
           data: weights,
-          borderColor: 'rgba(237, 100, 100, 1)',
-          backgroundColor: 'transparent',
-          pointBackgroundColor: 'rgba(237, 100, 100, 1)',
-          pointRadius: 5,
-          fill: false,
-          yAxisID: 'y1',
+          borderColor: 'rgba(66, 153, 225, 1)',
+          backgroundColor: 'rgba(66, 153, 225, 0.08)',
+          pointBackgroundColor: 'rgba(66, 153, 225, 1)',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointRadius: 7,
+          fill: true,
           tension: 0.3,
           spanGaps: true,
-          order: 1,
+        },
+        {
+          label: '목표 (80kg)',
+          data: labels.map(() => 80),
+          borderColor: 'rgba(239, 68, 68, 0.65)',
+          borderDash: [7, 4],
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: false,
         },
       ],
     },
@@ -203,24 +205,18 @@ function buildChartConfig(dataRows, monthLabel) {
       plugins: {
         title: {
           display: true,
-          text: `${monthLabel} 운동 기록`,
+          text: `${monthLabel} 체중 변화`,
           font: { size: 15, weight: 'bold' },
-          padding: { bottom: 12 },
+          padding: { bottom: 10 },
         },
         legend: { position: 'top' },
       },
       scales: {
         y: {
-          type: 'linear',
-          position: 'left',
-          title: { display: true, text: '칼로리(kcal)' },
-          beginAtZero: true,
-        },
-        y1: {
-          type: 'linear',
-          position: 'right',
-          title: { display: true, text: '체중(kg)' },
-          grid: { drawOnChartArea: false },
+          min: yMin,
+          max: yMax,
+          title: { display: true, text: '체중 (kg)' },
+          ticks: { stepSize: 1 },
         },
       },
     },

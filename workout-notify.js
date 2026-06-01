@@ -5,11 +5,11 @@ const fs = require('fs');
 const path = require('path');
 
 // ── 환경변수 ──────────────────────────────────────────────────────────────────
-const NOTION_TOKEN      = process.env.NOTION_TOKEN;
+const NOTION_TOKEN       = process.env.NOTION_TOKEN;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID  = process.env.TELEGRAM_CHAT_ID;
+const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
 // 운동 루트 페이지 ID (운동 → 2026년 → 2026년_06 → table)
-const WORKOUT_PAGE_ID   = process.env.WORKOUT_PAGE_ID || '372e60ccff0c8060b137e1b65779079b';
+const WORKOUT_PAGE_ID    = process.env.WORKOUT_PAGE_ID || '372e60ccff0c8060b137e1b65779079b';
 
 const REQUIRED_ENV = ['NOTION_TOKEN', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
 for (const key of REQUIRED_ENV) {
@@ -18,6 +18,9 @@ for (const key of REQUIRED_ENV) {
 
 const notion = new Client({ auth: NOTION_TOKEN });
 const STATE_FILE = path.join(__dirname, '.workout-notify-state.json');
+
+// 차트 블록 식별자 (Notion 캡션으로 구분)
+const CHART_CAPTION = '📊 월간 운동 현황';
 
 // ── 헬퍼 함수 ─────────────────────────────────────────────────────────────────
 
@@ -98,22 +101,20 @@ function cellText(cell = []) {
 // ── KST 오늘 날짜 ─────────────────────────────────────────────────────────────
 
 function getKSTToday() {
-  // UTC + 9h
   const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const year  = kst.getUTCFullYear();
   const month = kst.getUTCMonth() + 1;
   const day   = kst.getUTCDate();
   return {
-    dateStr:   `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+    dateStr:    `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
     year, month, day,
-    yearKey:   `${year}년`,
-    monthKey:  `${year}년_${String(month).padStart(2, '0')}`,
-    // 날짜 셀 접두사: "6/1(" 형식
+    yearKey:    `${year}년`,
+    monthKey:   `${year}년_${String(month).padStart(2, '0')}`,
     cellPrefix: `${month}/${day}(`,
   };
 }
 
-// ── 상태 파일 (당일 집계 수 유지) ─────────────────────────────────────────────
+// ── 상태 파일 ─────────────────────────────────────────────────────────────────
 
 function readState() {
   try {
@@ -126,13 +127,160 @@ function writeState(date, count) {
   fs.writeFileSync(STATE_FILE, JSON.stringify({ date, count }), 'utf-8');
 }
 
+// ── QuickChart — 차트 이미지 생성 ─────────────────────────────────────────────
+
+async function createChartUrl(chartConfig) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({ chart: chartConfig, width: 700, height: 320, backgroundColor: 'white' });
+    const req = https.request({
+      hostname: 'quickchart.io',
+      path: '/chart/create',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    }, res => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.success) resolve(parsed.url);
+          else reject(new Error('QuickChart 오류: ' + data.slice(0, 200)));
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+// dataRows(table_row 배열)에서 차트 config 생성
+function buildChartConfig(dataRows, monthLabel) {
+  const labels = [], calories = [], weights = [];
+
+  for (const row of dataRows) {
+    const cells = row.table_row?.cells ?? [];
+    labels.push(cellText(cells[0]));
+
+    const kcalRaw = cellText(cells[6]).replace(/[^0-9]/g, '');
+    const wtRaw   = cellText(cells[7]).replace(/[^0-9.]/g, '');
+    calories.push(kcalRaw ? parseInt(kcalRaw)   : null);
+    weights.push(wtRaw   ? parseFloat(wtRaw) : null);
+  }
+
+  return {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'bar',
+          label: '칼로리(kcal)',
+          data: calories,
+          backgroundColor: 'rgba(99, 179, 237, 0.75)',
+          borderColor: 'rgba(66, 153, 225, 1)',
+          borderWidth: 1,
+          yAxisID: 'y',
+          order: 2,
+        },
+        {
+          type: 'line',
+          label: '체중(kg)',
+          data: weights,
+          borderColor: 'rgba(237, 100, 100, 1)',
+          backgroundColor: 'transparent',
+          pointBackgroundColor: 'rgba(237, 100, 100, 1)',
+          pointRadius: 5,
+          fill: false,
+          yAxisID: 'y1',
+          tension: 0.3,
+          spanGaps: true,
+          order: 1,
+        },
+      ],
+    },
+    options: {
+      plugins: {
+        title: {
+          display: true,
+          text: `${monthLabel} 운동 기록`,
+          font: { size: 15, weight: 'bold' },
+          padding: { bottom: 12 },
+        },
+        legend: { position: 'top' },
+      },
+      scales: {
+        y: {
+          type: 'linear',
+          position: 'left',
+          title: { display: true, text: '칼로리(kcal)' },
+          beginAtZero: true,
+        },
+        y1: {
+          type: 'linear',
+          position: 'right',
+          title: { display: true, text: '체중(kg)' },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    },
+  };
+}
+
+// 월 페이지 최상단 차트 블록 삽입/갱신
+async function updateMonthlyChart(monthPageId, dataRows, monthLabel) {
+  if (dataRows.length === 0) return;
+
+  console.log('📊 차트 생성 중...');
+  const chartUrl = await createChartUrl(buildChartConfig(dataRows, monthLabel));
+  console.log('📊 차트 URL 생성 완료');
+
+  // 현재 페이지 블록 목록
+  const blocks = await getAllBlocks(monthPageId);
+
+  // 기존 차트 블록 탐색 (캡션으로 식별)
+  const chartIdx = blocks.findIndex(b => {
+    if (b.type !== 'image') return false;
+    const cap = (b.image?.caption ?? []).map(c => c.plain_text ?? '').join('');
+    return cap.includes(CHART_CAPTION);
+  });
+
+  let insertAfterBlockId;
+
+  if (chartIdx !== -1) {
+    // 차트 직전 블록을 삽입 기준으로 기억한 뒤 삭제
+    insertAfterBlockId = chartIdx > 0 ? blocks[chartIdx - 1].id : null;
+    await withRetry(() => notion.blocks.delete({ block_id: blocks[chartIdx].id }));
+    console.log('🗑️ 기존 차트 삭제');
+  } else {
+    // 첫 삽입: 테이블 직전 블록 다음에 끼워 넣기
+    const tableIdx = blocks.findIndex(b => b.type === 'table');
+    insertAfterBlockId = tableIdx > 0 ? blocks[tableIdx - 1].id : null;
+  }
+
+  const appendParams = {
+    block_id: monthPageId,
+    children: [{
+      type: 'image',
+      image: {
+        type: 'external',
+        external: { url: chartUrl },
+        caption: [{ type: 'text', text: { content: CHART_CAPTION } }],
+      },
+    }],
+  };
+  if (insertAfterBlockId) appendParams.after = insertAfterBlockId;
+
+  await withRetry(() => notion.blocks.children.append(appendParams));
+  console.log('✅ 차트 업데이트 완료');
+}
+
 // ── 메인 ──────────────────────────────────────────────────────────────────────
 
 async function main() {
   const today = getKSTToday();
   console.log(`📅 오늘 (KST): ${today.dateStr}`);
 
-  // 이전 집계 읽기 (날짜 다르면 0으로 리셋)
   const state = readState();
   const prevCount = state.date === today.dateStr ? state.count : 0;
   console.log(`📊 이전 집계: ${prevCount}건 (저장 날짜: ${state.date || '없음'})`);
@@ -148,7 +296,7 @@ async function main() {
   }
   console.log(`📁 연도: ${yearPage.title}`);
 
-  // ② 연도 페이지 → 월 페이지 (정확히 일치하는 것, 없으면 이름 내림차순 최신)
+  // ② 연도 페이지 → 월 페이지
   const monthPages = await getChildPages(yearPage.id);
   const monthPage = monthPages.find(p => p.title === today.monthKey)
     ?? monthPages.sort((a, b) => b.title.localeCompare(a.title))[0];
@@ -168,7 +316,7 @@ async function main() {
     return;
   }
 
-  // ④ 테이블 행 가져오기 (헤더 행 제외)
+  // ④ 테이블 행 (헤더 제외)
   const allRows = (await getAllBlocks(tableBlock.id)).filter(b => b.type === 'table_row');
   const hasRowHeader = tableBlock.table?.has_row_header ?? true;
   const dataRows = hasRowHeader ? allRows.slice(1) : allRows;
@@ -182,21 +330,20 @@ async function main() {
   const currentCount = todayRows.length;
   console.log(`🏋️ 오늘 운동 기록: ${currentCount}건 (이전: ${prevCount}건)`);
 
-  // ⑥ 새 기록이 있으면 알림 전송
+  // ⑥ 새 기록 감지 → 알림 + 차트 갱신
   if (currentCount > prevCount) {
-    // 새로 추가된 행만 (prevCount 이후)
     const newRows = todayRows.slice(prevCount);
     for (const row of newRows) {
       const cells = row.table_row?.cells ?? [];
-      const dateCell     = cellText(cells[0]);  // 날짜
-      const typeCell     = cellText(cells[1]);  // 운동 종류
-      const timeCell     = cellText(cells[2]);  // 시간
-      const levelCell    = cellText(cells[3]);  // 강도
-      const avgBPM       = cellText(cells[4]);  // 평균BPM
-      const maxBPM       = cellText(cells[5]);  // 최고BPM
-      const kcalCell     = cellText(cells[6]);  // 칼로리
-      const weightCell   = cellText(cells[7]);  // 체중
-      const feedbackCell = cellText(cells[9]);  // 트레이너 피드백
+      const dateCell     = cellText(cells[0]);
+      const typeCell     = cellText(cells[1]);
+      const timeCell     = cellText(cells[2]);
+      const levelCell    = cellText(cells[3]);
+      const avgBPM       = cellText(cells[4]);
+      const maxBPM       = cellText(cells[5]);
+      const kcalCell     = cellText(cells[6]);
+      const weightCell   = cellText(cells[7]);
+      const feedbackCell = cellText(cells[9]);
 
       const parts = [];
       if (typeCell)  parts.push(typeCell);
@@ -221,6 +368,11 @@ async function main() {
       await sendTelegram(msg);
       console.log('✅ 전송 완료');
     }
+
+    // 月 전체 데이터로 차트 갱신
+    // "2026년_06" → "2026년 6월"
+    const monthLabel = monthPage.title.replace(/년_(\d{2})$/, (_, m) => `년 ${parseInt(m)}월`);
+    await updateMonthlyChart(monthPage.id, dataRows, monthLabel);
   } else {
     console.log('ℹ️ 새 운동 기록 없음.');
   }

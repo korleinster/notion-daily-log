@@ -372,8 +372,21 @@ function parseAssigneesFromText(text) {
 
 const MILESTONE_RE = /^(\d{4,6}|미정)\s*[-–—]/;
 
-// 마일스톤 블록을 재귀 스캔해 담당자별 일감 수 집계
-async function scanMilestoneAssignees(blockId, counts = {}) {
+// 단축 이름("효섭") → 풀네임("임효섭") 매핑 생성
+function buildShortNameMap(names) {
+  const fullNames = names.filter(n => n.length >= 3);
+  const map = {};
+  for (const name of names) {
+    if (name.length < 3) {
+      const match = fullNames.find(fn => fn.endsWith(name));
+      if (match) map[name] = match;
+    }
+  }
+  return map;
+}
+
+// 마일스톤 블록 재귀 스캔 (내부용): 원본 이름·횟수 수집
+async function _gatherMilestoneData(blockId, rawCounts, allNames) {
   const blocks = await getAllBlocks(blockId);
   for (const block of blocks) {
     if (block.type !== 'bulleted_list_item') continue;
@@ -386,15 +399,32 @@ async function scanMilestoneAssignees(blockId, counts = {}) {
         const fc = children[0];
         const fcText = fc[fc.type]?.rich_text ? extractText(fc[fc.type].rich_text) : '';
         const fcClean = fcText.replace(/\*+/g, '').trim();
-        if (/^[가-힣]{2,4}/.test(fcClean)) {
+        // "보스 - 예진님 → 발주 완료" 같은 상태 라인은 제외
+        const isStatusLine = /→/.test(fcClean) || /^[가-힣]{1,3}\s*[-–—]\s/.test(fcClean);
+        if (/^[가-힣]{2,4}/.test(fcClean) && !isStatusLine) {
           for (const name of parseAssigneesFromText(fcText)) {
-            counts[name] = (counts[name] || 0) + 1;
+            allNames.add(name);
+            rawCounts[name] = (rawCounts[name] || 0) + 1;
           }
         }
       }
     } else if (!MILESTONE_RE.test(text) && block.has_children) {
-      await scanMilestoneAssignees(block.id, counts);
+      await _gatherMilestoneData(block.id, rawCounts, allNames);
     }
+  }
+}
+
+// 담당자별 일감 수 집계 (단축 이름은 풀네임으로 통합)
+async function scanMilestoneAssignees(blockId) {
+  const rawCounts = {};
+  const allNames = new Set();
+  await _gatherMilestoneData(blockId, rawCounts, allNames);
+
+  const nameMap = buildShortNameMap([...allNames]);
+  const counts = {};
+  for (const [name, count] of Object.entries(rawCounts)) {
+    const canonical = nameMap[name] || name;
+    counts[canonical] = (counts[canonical] || 0) + count;
   }
   return counts;
 }

@@ -12,14 +12,20 @@
 - `NOTION_TOKEN` — Notion Integration 토큰
 - `DAILY_LOG_PAGE_ID` — 일일업무일지 페이지 ID (`0a1501a086b945b1b84b7dfc8b44bf52`)
 - `TELEGRAM_BOT_TOKEN` — 텔레그램 봇 토큰
-- `TELEGRAM_CHAT_ID` — 텔레그램 채널 ID (`-1003908956979`, "Leinster Daily" 채널)
+- `TELEGRAM_CHAT_ID` — 텔레그램 개인 DM ID (`5515513986`, notionDailyWorkLog 봇과의 개인 대화)
 - `APPLE_ID` — Apple ID 이메일
 - `APPLE_APP_PASSWORD` — Apple 앱 암호
 
 ### review.js (pre-push 코드리뷰)
 - `GEMINI_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID` (채널 ID, `-1003908956979`)
+- `TELEGRAM_CHAT_ID` (개인 DM ID, `5515513986`)
+
+### workout-notify.js (운동 기록 알림 — README 미포함, 독립 스크립트)
+- `NOTION_TOKEN`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- `WORKOUT_PAGE_ID` (선택, 기본값 `372e60ccff0c8060b137e1b65779079b` 하드코딩)
 
 ## 핵심 파일
 - `index.js` — 메인 로직
@@ -58,6 +64,17 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - 모델: `gemini-2.5-flash-lite` (free tier, 속도 최적화)
 - bash hook에서 Node.js 파일 분리 (shell escaping 문제 회피)
 - Telegram 전송 없음 — stdout으로만 출력 (Claude Bash 출력에 표시됨)
+
+## 운동 기록 알림 (workout-notify.js)
+- **README 미포함** — 개인 운동 기록용 독립 스크립트
+- 운동 페이지 구조: 운동(root) → `{year}년` → `{year}년_{MM}` → table
+  - 테이블 컬럼 순서: 날짜 / 운동 종류 / 시간 / 강도 / 평균BPM / 최고BPM / 칼로리 / 체중 / 메모 / 피드백
+  - 날짜 셀 형식: `M/D(요일)` (예: `6/1(월)`, `12/31(수)`)
+- 상태 파일 `.workout-notify-state.json`: `{ "date": "2026-06-01", "count": 1 }` 구조
+  - 날짜가 다르면 count 자동 리셋
+  - GitHub Actions Cache에 `workout-state-{date}-{run_id}` 키로 저장
+- 워크플로우 `workout-notify.yml`: KST 08:00~23:00 매시간 실행 (`0 0-14,23 * * *` UTC)
+- 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중 요약)
 
 ## 주의사항
 - Gemini는 Default Project 사용 (project-specific quota가 0일 수 있음)

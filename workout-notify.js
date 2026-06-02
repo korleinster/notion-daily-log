@@ -440,7 +440,7 @@ async function main() {
       const maxBPM       = cellText(cells[5]);
       const kcalCell     = cellText(cells[6]);
       const weightCell   = cellText(cells[7]);
-      const feedbackCell = cellText(cells[9]);
+      const feedbackCell = cellText(cells[10]);
 
       const parts = [];
       if (typeCell)  parts.push(typeCell);

@@ -1,0 +1,43 @@
+name: Mac Mini Uptime Monitor
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Check Mac Mini heartbeat
+        env:
+          GIST_ID: ${{ secrets.MACMINI_GIST_ID }}
+          GIST_TOKEN: ${{ secrets.MACMINI_GIST_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          RESPONSE=$(curl -s \
+            -H "Authorization: token ${GIST_TOKEN}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/gists/${GIST_ID}")
+
+          UPDATED_AT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['updated_at'])")
+          UPDATED_TS=$(date -d "$UPDATED_AT" +%s)
+          NOW_TS=$(date +%s)
+          DIFF=$(( (NOW_TS - UPDATED_TS) / 60 ))
+
+          echo "Last heartbeat: ${DIFF} minutes ago (${UPDATED_AT})"
+
+          if [ "$DIFF" -gt 15 ]; then
+            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+              -d chat_id="${TELEGRAM_CHAT_ID}" \
+              -d text="🚨 *Mac Mini Down Alert*
+
+Last heartbeat: ${DIFF} minutes ago
+Server may be offline or unreachable.
+
+Check: ssh leinster@100.109.220.64" \
+              -d parse_mode="Markdown"
+          fi

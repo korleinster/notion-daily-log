@@ -3,7 +3,7 @@
 > Every morning, a Notion daily log is created automatically and your weather, calendar, and tasks are sent to Telegram.
 
 **Notion Daily Log Bot** is a personal automation tool that runs every weekday morning via GitHub Actions.  
-It creates a new daily log page in Notion (cloned from the previous day), fetches weather data and iCloud Calendar events, then sends a morning briefing to a Telegram channel — all without touching your computer.
+It creates a new daily log page in Notion (cloned from the previous day), fetches weather data and iCloud Calendar events, then sends a morning briefing to a Telegram personal DM — all without touching your computer.
 
 [![Node.js](https://img.shields.io/badge/Node.js-20-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-automated-2088FF?logo=github-actions&logoColor=white)](https://github.com/features/actions)
@@ -19,7 +19,7 @@ It creates a new daily log page in Notion (cloned from the previous day), fetche
 | 📄 **Auto Notion daily log** | Clones the previous day's page to create a new log, excluding completed to-dos |
 | 🌤 **Weather info** | Fetches today's weather via Open-Meteo API (free, no key required) |
 | 📆 **Calendar integration** | Shows today + next 3 days via iCloud CalDAV, supports recurring events |
-| 📬 **Telegram notifications** | Sends weather, schedule, and tasks to your channel every morning |
+| 📬 **Telegram notifications** | Sends weather, schedule, and tasks to your personal DM every morning |
 | ⏰ **Fully automated** | Runs automatically on weekdays at 05:00 KST via GitHub Actions; manual trigger available |
 
 ---
@@ -115,7 +115,7 @@ Please check!
 | `NOTION_TOKEN` | Notion Integration token (notion.so/my-integrations) |
 | `DAILY_LOG_PAGE_ID` | Daily log root page ID |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token (@BotFather → /mybots) |
-| `TELEGRAM_CHAT_ID` | Telegram channel ID |
+| `TELEGRAM_CHAT_ID` | Telegram personal DM ID |
 | `APPLE_ID` | Apple ID email (for iCloud Calendar; skipped if missing) |
 | `APPLE_APP_PASSWORD` | Apple app-specific password (for iCloud Calendar; skipped if missing) |
 

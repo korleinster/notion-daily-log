@@ -74,7 +74,7 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
   - 날짜가 다르면 count 자동 리셋
   - GitHub Actions Cache에 `workout-state-{date}-{run_id}` 키로 저장
 - 워크플로우 `workout-notify.yml`: KST 08:00~23:00 매시간 실행 (`0 0-14,23 * * *` UTC)
-- 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중 요약)
+- 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중/트레이너 피드백 요약)
 
 ## 주의사항
 - Gemini는 Default Project 사용 (project-specific quota가 0일 수 있음)

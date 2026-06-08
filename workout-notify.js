@@ -8,7 +8,7 @@ const path = require('path');
 const NOTION_TOKEN       = process.env.NOTION_TOKEN;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID   = process.env.TELEGRAM_CHAT_ID;
-// 운동 루트 페이지 ID (운동 → 2026년 → 2026년_06 → table)
+// 운동 루트 페이지 ID (운동 → 2026년 → 2026년_06 → database)
 const WORKOUT_PAGE_ID    = process.env.WORKOUT_PAGE_ID || '372e60ccff0c8060b137e1b65779079b';
 
 const REQUIRED_ENV = ['NOTION_TOKEN', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
@@ -96,9 +96,36 @@ async function getAllBlocks(blockId) {
   return blocks;
 }
 
-// table_row 셀 → 텍스트
-function cellText(cell = []) {
-  return cell.map(rt => rt.plain_text ?? rt.text?.content ?? '').join('').trim();
+// 운동 데이터베이스 전체 조회 (날짜 오름차순)
+async function getAllDbRows(dbId) {
+  const rows = [];
+  let cursor;
+  while (true) {
+    const res = await withRetry(() =>
+      notion.databases.query({
+        database_id: dbId,
+        sorts: [{ property: '날짜', direction: 'ascending' }],
+        start_cursor: cursor,
+        page_size: 100,
+      })
+    );
+    rows.push(...res.results);
+    if (!res.has_more) break;
+    cursor = res.next_cursor;
+  }
+  return rows;
+}
+
+// Notion DB properties에서 값 추출
+function propVal(prop) {
+  if (!prop) return '';
+  switch (prop.type) {
+    case 'title':     return (prop.title ?? [])[0]?.plain_text ?? '';
+    case 'rich_text': return (prop.rich_text ?? [])[0]?.plain_text ?? '';
+    case 'select':    return prop.select?.name ?? '';
+    case 'number':    return prop.number != null ? String(prop.number) : '';
+    default:          return '';
+  }
 }
 
 // ── KST 오늘 날짜 ─────────────────────────────────────────────────────────────
@@ -158,14 +185,14 @@ async function createChartUrl(chartConfig) {
 }
 
 // ── 차트 1: 체중 추이 + 목표선 ───────────────────────────────────────────────
-function buildWeightChartConfig(dataRows, monthLabel) {
+function buildWeightChartConfig(dbRows, monthLabel) {
   const labels = [], weights = [];
 
-  for (const row of dataRows) {
-    const cells = row.table_row?.cells ?? [];
-    labels.push(cellText(cells[0]));
-    const wtRaw = cellText(cells[7]).replace(/[^0-9.]/g, '');
-    weights.push(wtRaw ? parseFloat(wtRaw) : null);
+  for (const row of dbRows) {
+    const p = row.properties;
+    labels.push(propVal(p['날짜']));
+    const wt = p['체중(kg)']?.number;
+    weights.push(wt != null ? wt : null);
   }
 
   // Y축 범위: 목표(80kg) 포함, 현재 체중 위로 여유
@@ -227,16 +254,14 @@ function buildWeightChartConfig(dataRows, monthLabel) {
 }
 
 // ── 차트 2: 칼로리(막대) + 평균BPM(선) ──────────────────────────────────────
-function buildIntensityChartConfig(dataRows, monthLabel) {
+function buildIntensityChartConfig(dbRows, monthLabel) {
   const labels = [], calories = [], avgBPMs = [];
 
-  for (const row of dataRows) {
-    const cells = row.table_row?.cells ?? [];
-    labels.push(cellText(cells[0]));
-    const kcalRaw = cellText(cells[6]).replace(/[^0-9]/g, '');
-    const bpmRaw  = cellText(cells[4]).replace(/[^0-9]/g, '');
-    calories.push(kcalRaw ? parseInt(kcalRaw) : null);
-    avgBPMs.push(bpmRaw  ? parseInt(bpmRaw)  : null);
+  for (const row of dbRows) {
+    const p = row.properties;
+    labels.push(propVal(p['날짜']));
+    calories.push(p['칼로리']?.number ?? null);
+    avgBPMs.push(p['평균BPM']?.number ?? null);
   }
 
   const validCal = calories.filter(c => c !== null);
@@ -323,26 +348,26 @@ function makeImageBlock(url, caption) {
 }
 
 // 월 페이지에 차트 2개 삽입/갱신 (체중 → 강도 순)
-async function updateMonthlyChart(monthPageId, dataRows, monthLabel) {
-  if (dataRows.length === 0) return;
+async function updateMonthlyChart(monthPageId, dbRows, monthLabel) {
+  if (dbRows.length === 0) return;
 
   console.log('📊 차트 2개 생성 중...');
   const [weightUrl, intensityUrl] = await Promise.all([
-    createChartUrl(buildWeightChartConfig(dataRows, monthLabel)),
-    createChartUrl(buildIntensityChartConfig(dataRows, monthLabel)),
+    createChartUrl(buildWeightChartConfig(dbRows, monthLabel)),
+    createChartUrl(buildIntensityChartConfig(dbRows, monthLabel)),
   ]);
   console.log('📊 차트 URL 생성 완료');
 
   const blocks = await getAllBlocks(monthPageId);
 
-  // 기존 차트 블록 모두 찾기 (캡션에 📊 포함 또는 구버전 캡션 포함)
+  // 기존 차트 블록 모두 찾기 (캡션에 📊 포함)
   const existingCharts = blocks.filter(b => {
     if (b.type !== 'image') return false;
     const cap = (b.image?.caption ?? []).map(c => c.plain_text ?? '').join('');
     return cap.startsWith('📊');
   });
 
-  // 삽입 기준: 첫 번째 기존 차트 직전 블록 (없으면 테이블 직전)
+  // 삽입 기준: 첫 번째 기존 차트 직전 블록 (없으면 데이터베이스 직전)
   let insertAfterBlockId = null;
   if (existingCharts.length > 0) {
     const firstIdx = blocks.findIndex(b => b.id === existingCharts[0].id);
@@ -352,8 +377,8 @@ async function updateMonthlyChart(monthPageId, dataRows, monthLabel) {
     }
     console.log(`🗑️ 기존 차트 ${existingCharts.length}개 삭제`);
   } else {
-    const tableIdx = blocks.findIndex(b => b.type === 'table');
-    insertAfterBlockId = tableIdx > 0 ? blocks[tableIdx - 1].id : null;
+    const dbIdx = blocks.findIndex(b => b.type === 'child_database');
+    insertAfterBlockId = dbIdx > 0 ? blocks[dbIdx - 1].id : null;
   }
 
   // 체중 차트 삽입
@@ -404,24 +429,24 @@ async function main() {
   }
   console.log(`📁 월: ${monthPage.title}`);
 
-  // ③ 월 페이지 → table 블록
+  // ③ 월 페이지 → child_database 블록 탐색
   const monthBlocks = await getAllBlocks(monthPage.id);
-  const tableBlock = monthBlocks.find(b => b.type === 'table');
-  if (!tableBlock) {
-    console.log('⚠️ 테이블 없음.');
+  const dbBlock = monthBlocks.find(b => b.type === 'child_database');
+  if (!dbBlock) {
+    console.log('⚠️ 운동 데이터베이스 없음.');
     writeState(today.dateStr, prevCount);
     return;
   }
+  const dbId = dbBlock.id;
+  console.log(`🗄️ 데이터베이스 ID: ${dbId}`);
 
-  // ④ 테이블 행 (헤더 제외)
-  const allRows = (await getAllBlocks(tableBlock.id)).filter(b => b.type === 'table_row');
-  const hasRowHeader = tableBlock.table?.has_row_header ?? true;
-  const dataRows = hasRowHeader ? allRows.slice(1) : allRows;
+  // ④ 데이터베이스 전체 조회 (날짜 오름차순)
+  const allRows = await getAllDbRows(dbId);
 
   // ⑤ 오늘 날짜 행 필터
-  const todayRows = dataRows.filter(row => {
-    const dateCell = cellText((row.table_row?.cells ?? [])[0]);
-    return dateCell.startsWith(today.cellPrefix);
+  const todayRows = allRows.filter(row => {
+    const dateVal = row.properties['날짜']?.title?.[0]?.plain_text ?? '';
+    return dateVal.startsWith(today.cellPrefix);
   });
 
   const currentCount = todayRows.length;
@@ -431,25 +456,32 @@ async function main() {
   if (currentCount > prevCount) {
     const newRows = todayRows.slice(prevCount);
     for (const row of newRows) {
-      const cells = row.table_row?.cells ?? [];
-      const dateCell     = cellText(cells[0]);
-      const typeCell     = cellText(cells[1]);
-      const timeCell     = cellText(cells[2]);
-      const levelCell    = cellText(cells[3]);
-      const avgBPM       = cellText(cells[4]);
-      const maxBPM       = cellText(cells[5]);
-      const kcalCell     = cellText(cells[6]);
-      const weightCell   = cellText(cells[7]);
-      const feedbackCell = cellText(cells[10]);
+      const p = row.properties;
+
+      const dateCell     = propVal(p['날짜']);
+      const typeCell     = propVal(p['운동종류']);
+      const timeNum      = p['시간(분)']?.number;
+      const timeCell     = timeNum != null ? `${timeNum}분` : '';
+      const levelCell    = propVal(p['강도']);
+      const avgBPMNum    = p['평균BPM']?.number;
+      const maxBPMNum    = p['최고BPM']?.number;
+      const kcalNum      = p['칼로리']?.number;
+      const kcalCell     = kcalNum != null ? `${kcalNum}kcal` : '';
+      const weightNum    = p['체중(kg)']?.number;
+      const weightCell   = weightNum != null ? `${weightNum}kg` : '';
+      const feedbackCell = propVal(p['트레이너피드백']);
+
+      const avgBPMStr = avgBPMNum != null ? String(avgBPMNum) : '';
+      const maxBPMStr = maxBPMNum != null ? String(maxBPMNum) : '';
 
       const parts = [];
       if (typeCell)  parts.push(typeCell);
       if (timeCell)  parts.push(timeCell);
       if (levelCell) parts.push(`강도 ${levelCell}`);
       if (kcalCell)  parts.push(kcalCell);
-      const bpm = avgBPM && maxBPM ? `BPM ${avgBPM}/${maxBPM}`
-                : avgBPM ? `평균BPM ${avgBPM}`
-                : maxBPM ? `최고BPM ${maxBPM}` : '';
+      const bpm = avgBPMStr && maxBPMStr ? `BPM ${avgBPMStr}/${maxBPMStr}`
+                : avgBPMStr ? `평균BPM ${avgBPMStr}`
+                : maxBPMStr ? `최고BPM ${maxBPMStr}` : '';
       if (bpm) parts.push(bpm);
 
       const summaryLine  = parts.join(' · ');
@@ -469,7 +501,7 @@ async function main() {
     // 月 전체 데이터로 차트 갱신
     // "2026년_06" → "2026년 6월"
     const monthLabel = monthPage.title.replace(/년_(\d{2})$/, (_, m) => `년 ${parseInt(m)}월`);
-    await updateMonthlyChart(monthPage.id, dataRows, monthLabel);
+    await updateMonthlyChart(monthPage.id, allRows, monthLabel);
   } else {
     console.log('ℹ️ 새 운동 기록 없음.');
   }

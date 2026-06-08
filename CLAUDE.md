@@ -67,14 +67,30 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 
 ## 운동 기록 알림 (workout-notify.js)
 - **README 미포함** — 개인 운동 기록용 독립 스크립트
-- 운동 페이지 구조: 운동(root) → `{year}년` → `{year}년_{MM}` → table
-  - 테이블 컬럼 순서: 날짜(0) / 운동 종류(1) / 시간(2) / 강도(3) / 평균BPM(4) / 최고BPM(5) / 칼로리(6) / 체중(7) / 심박존 분포(8) / 메모(9) / 트레이너 피드백(10)
-  - 날짜 셀 형식: `M/D(요일)` (예: `6/1(월)`, `12/31(수)`)
+- 운동 페이지 구조: 운동(root) → `{year}년` → `{year}년_{MM}` → **Notion Database** (`child_database`)
+  - DB 이름: `운동기록` (ID: `1a3d24fc-9bca-444e-91ac-f6a55319669a`)
+  - DB 스키마 (Notion properties 방식으로 접근):
+    | 필드명 | 타입 | 비고 |
+    |--------|------|------|
+    | 날짜 | title | `M/D(요일)` 형식 (예: `6/1(월)`) |
+    | 운동종류 | select | 사이클/런닝/웨이트/걷기/수영 |
+    | 시간(분) | number | 숫자 (분 단위) |
+    | 강도 | text | |
+    | 평균BPM | number | |
+    | 최고BPM | number | |
+    | 칼로리 | number | |
+    | 체중(kg) | number | |
+    | 심박존분포 | text | |
+    | 메모 | text | |
+    | 트레이너피드백 | text | |
+  - `notion.databases.query()` API로 데이터 조회 (`table_row` 방식 아님)
+  - `propVal(prop)` 헬퍼로 title/rich_text/select/number 타입 통일 추출
 - 상태 파일 `.workout-notify-state.json`: `{ "date": "2026-06-01", "count": 1 }` 구조
   - 날짜가 다르면 count 자동 리셋
   - GitHub Actions Cache에 `workout-state-{date}-{run_id}` 키로 저장
 - 워크플로우 `workout-notify.yml`: KST 08:00~23:00 매시간 실행 (`0 0-14,23 * * *` UTC)
 - 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중/트레이너 피드백 요약)
+- 차트 삽입 기준: 기존 `image` 블록(캡션 `📊` 시작) 없으면 `child_database` 직전에 삽입
 
 ## 주의사항
 - Gemini는 Default Project 사용 (project-specific quota가 0일 수 있음)

@@ -2,9 +2,9 @@ name: Workout Notify
 
 on:
   schedule:
-    # KST 오전 8시 ~ 오후 11시 매시간
+    # KST 오전 8시 ~ 오후 11시 10분마다
     # UTC 기준: 23시(KST 08:00) + 00~14시(KST 09:00~23:00)
-    - cron: '0 0-14,23 * * *'
+    - cron: '*/10 0-14,23 * * *'
   workflow_dispatch:
 
 jobs:

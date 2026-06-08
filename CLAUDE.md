@@ -88,7 +88,7 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - 상태 파일 `.workout-notify-state.json`: `{ "date": "2026-06-01", "count": 1 }` 구조
   - 날짜가 다르면 count 자동 리셋
   - GitHub Actions Cache에 `workout-state-{date}-{run_id}` 키로 저장
-- 워크플로우 `workout-notify.yml`: KST 08:00~23:00 매시간 실행 (`0 0-14,23 * * *` UTC)
+- 워크플로우 `workout-notify.yml`: KST 08:00~23:00 10분마다 실행 (`*/10 0-14,23 * * *` UTC)
 - 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중/트레이너 피드백 요약)
 - 차트 삽입 기준: 기존 `image` 블록(캡션 `📊` 시작) 없으면 `child_database` 직전에 삽입
 

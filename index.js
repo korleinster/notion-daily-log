@@ -474,6 +474,21 @@ function convertBlockFlat(block, dateInfo) {
     blockData.checked = false;
   }
 
+  if (['image', 'video', 'file', 'audio', 'pdf'].includes(type)) {
+    const caption = blockData.caption || [];
+    const name = blockData.name;
+    let mediaObj;
+    if (blockData.external?.url) {
+      mediaObj = { external: { url: blockData.external.url } };
+    } else if (blockData.file?.url) {
+      mediaObj = { external: { url: blockData.file.url } };
+    } else {
+      return null;
+    }
+    if (name) mediaObj.name = name;
+    return { object: 'block', type, [type]: { ...mediaObj, caption } };
+  }
+
   delete blockData.children;
   return { object: 'block', type, [type]: blockData };
 }

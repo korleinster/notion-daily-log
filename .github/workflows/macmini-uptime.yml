@@ -17,6 +17,8 @@ jobs:
           GIST_TOKEN: ${{ secrets.MACMINI_GIST_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MACMINI_WAN_IP: ${{ secrets.MACMINI_WAN_IP }}
+          MACMINI_MAC: "68:5b:35:b3:48:94"
         run: |
           RESPONSE=$(curl -s \
             -H "Authorization: token ${GIST_TOKEN}" \
@@ -31,13 +33,29 @@ jobs:
           echo "Last heartbeat: ${DIFF} minutes ago (${UPDATED_AT})"
 
           if [ "$DIFF" -gt 15 ]; then
+            echo "Mac Mini appears offline. Sending WOL magic packet..."
+
+            python3 << 'PYEOF'
+import socket, struct, os
+
+mac = os.environ["MACMINI_MAC"].replace(":", "")
+wan_ip = os.environ["MACMINI_WAN_IP"]
+port = 9002
+
+magic = bytes.fromhex("F" * 12 + mac * 16)
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    s.sendto(magic, (wan_ip, port))
+print(f"WOL magic packet sent to {wan_ip}:{port}")
+PYEOF
+
             curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
               -d chat_id="${TELEGRAM_CHAT_ID}" \
               -d text="🚨 *Mac Mini Down Alert*
 
 Last heartbeat: ${DIFF} minutes ago
-Server may be offline or unreachable.
+WOL magic packet sent → attempting auto wake-up.
 
-Check: ssh leinster@100.109.220.64" \
+If it doesn't recover in 5 minutes, check the router or power." \
               -d parse_mode="Markdown"
           fi

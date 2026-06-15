@@ -43,7 +43,7 @@
 ---  (divider)
 📋 오늘의 장기업무 현황  (heading_2)
   • [상태] 일정코드 업무명
-    • 담당자 (역할): 업무현황
+    • 담당자 (역할): 마지막 댓글 (없으면 —)
   • ...
 🔗 장기업무 보드  (link_to_page → BOARD_PAGE_ID)
 ```
@@ -85,8 +85,8 @@
 - 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select), `상태`(select), `담당자`(select), `역할`(multi_select)
 - 진행상황은 각 행(페이지)의 **댓글**로 관리 (`업무현황` 속성은 제거됨)
 - 담당자 단위 행: 한 업무에 N명이면 N개 행 (칸반 그룹핑 최적화)
-- 뷰: 업무단위 보드(GROUP BY 상태, SORT BY 일정코드 ASC), 담당자별 보드(GROUP BY 담당자)
-- 사용자가 직접 입력 + `업무현황`을 매일 업데이트 → 매일 아침 스냅샷으로 일지에 기록
+- 뷰: 업무단위 보드(GROUP BY 상태, SORT BY 일정코드 ASC), 담당자별 보드(GROUP BY 담당자, SORT BY 일정코드 ASC)
+- 사용자가 각 행에 댓글로 진행상황 업데이트 → 매일 아침 스냅샷에서 마지막 댓글을 읽어 일지에 기록
 
 ## Git Pre-push Hook
 push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채팅창에 출력
@@ -128,3 +128,4 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - README 수정 시 CLAUDE.md에도 반영 필요
 - 워크플로우 파일은 `.github/workflows/daily-work-log.yml` 하나만 존재 (루트의 `daily-work-log.yml`은 삭제됨 — GitHub Actions는 `.github/workflows/`만 읽음)
 - `sendTelegram`은 `ok: false` 응답 및 JSON 파싱 실패 시 reject 처리됨 (에러 조용히 무시하지 않음)
+- Notion 인테그레이션에 **Read comments + Insert comments** 권한 필요 (notion.so/my-integrations → Capabilities)

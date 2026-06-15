@@ -17,8 +17,8 @@ It creates a new daily log page in Notion (cloned from the previous day), fetche
 | Feature | Description |
 |------|------|
 | 📄 **Auto Notion daily log** | Clones the previous day's personal section (todos, leave) to create a new daily page |
-| 📋 **Long-term task snapshot** | Queries a permanent Notion DB each morning and writes a text snapshot into the daily log |
-| 🗂 **Kanban board** | Permanent task DB with two board views: by status and by assignee |
+| 📋 **Long-term task snapshot** | Queries a permanent Notion DB each morning; reads the last comment on each row as the status and writes a snapshot into the daily log |
+| 🗂 **Kanban board** | Permanent task DB with two board views (by status, by assignee), both sorted by schedule code |
 | 🌤 **Weather info** | Fetches today's weather via Open-Meteo API (free, no key required) |
 | 📆 **Calendar integration** | Shows today + next 3 days via iCloud CalDAV, supports recurring events |
 | 📬 **Telegram notifications** | Sends weather, schedule, and tasks to your personal DM every morning |
@@ -74,9 +74,11 @@ The script works by **cloning the personal section from the previous daily log**
 
 1. Create a `📊 장기업무` page in your Daily Work Log root
 2. Create a Notion database inside with this schema:
-   - `업무명` (title), `일정코드` (text), `카테고리` (select), `상태` (select), `담당자` (select), `역할` (multi-select), `업무현황` (text)
-3. Add two board views: grouped by `상태` and by `담당자`
+   - `업무명` (title), `일정코드` (text), `카테고리` (select), `상태` (select), `담당자` (select), `역할` (multi-select)
+   - Progress updates are tracked via **row-level comments** (no separate status column)
+3. Add two board views: grouped by `상태` and by `담당자`, both sorted by `일정코드` ASC
 4. Add `WORKTASK_DB_ID` and `BOARD_PAGE_ID` to GitHub Secrets and local `.env`
+5. Enable **Read comments** and **Insert comments** capabilities on the Notion integration (notion.so/my-integrations → Capabilities)
 
 ---
 
@@ -137,7 +139,7 @@ Please check!
 | `TELEGRAM_CHAT_ID` | Telegram personal DM ID |
 | `APPLE_ID` | Apple ID email (for iCloud Calendar; skipped if missing) |
 | `APPLE_APP_PASSWORD` | Apple app-specific password (for iCloud Calendar; skipped if missing) |
-| `WORKTASK_DB_ID` | Long-term task DB ID (for daily snapshot generation) |
+| `WORKTASK_DB_ID` | Long-term task DB ID (for daily snapshot; reads last comment per row) |
 | `BOARD_PAGE_ID` | Long-term task board page ID (linked at the bottom of each daily page) |
 
 ### Local only (`.env` + pre-push hook)

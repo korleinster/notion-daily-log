@@ -15,6 +15,8 @@
 - `TELEGRAM_CHAT_ID` — 텔레그램 개인 DM ID (`5515513986`, notionDailyWorkLog 봇과의 개인 대화)
 - `APPLE_ID` — Apple ID 이메일
 - `APPLE_APP_PASSWORD` — Apple 앱 암호
+- `WORKTASK_DB_ID` — 장기업무 Notion DB ID (`9e80cbf822064d7dae69e6fbdbb6134c`)
+- `BOARD_PAGE_ID` — 장기업무 보드 페이지 ID (`380e60ccff0c8121a545e0c5f7b9e233`)
 
 ### review.js (pre-push 코드리뷰)
 - `GEMINI_API_KEY`
@@ -33,6 +35,19 @@
 - `.git/hooks/pre-push` — bash 진입점
 - `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
 
+## 일일 일지 레이아웃 (신 레이아웃)
+
+새 페이지 생성 시 구조:
+```
+🔥 나의 업무 현황  (개인 섹션: 당장 할 거 / 연차 / 나중에)
+---  (divider)
+📋 오늘의 장기업무 현황  (heading_2)
+  • [상태] 일정코드 업무명
+    • 담당자 (역할): 업무현황
+  • ...
+🔗 장기업무 보드  (link_to_page → BOARD_PAGE_ID)
+```
+
 ## index.js 주요 구현
 - 시작 시 필수 환경변수 검증 (`REQUIRED_ENV` 목록)
 - 날씨 + 캘린더 `Promise.all` 병렬 로딩
@@ -44,20 +59,31 @@
 - `collectTodos`에서 `UNSUPPORTED_TYPES` 블록 건너뜀
 - Notion API로 일일 로그 페이지 생성/업데이트
 
+### findPersonalBlocks(sourcePageId)
+- 구 레이아웃(column_list): 첫 번째 컬럼의 블록 반환
+- 신 레이아웃(flat): divider / link_to_page / `📋`로 시작하는 헤딩 이전까지의 블록 반환
+- 두 레이아웃 모두 지원하므로 이전 일지에서도 정상 복사 가능
+
+### buildSnapshotSection(dayPageId, dbId)
+- `장기업무` DB를 `일정코드` 오름차순으로 전체 조회
+- `업무명` 기준으로 그룹핑 → 헤더 블록(`[상태] 일정코드 업무명`) append
+- 각 헤더 블록에 담당자 서브 블록(`담당자 (역할): 업무현황 or —`) 추가
+- `WORKTASK_DB_ID` 없으면 heading만 append하고 조기 반환
+
 ## 연차 자동 처리
-- 왼쪽 컬럼의 "연차" 블록 하위 항목을 복사 시 날짜 파싱
+- 개인 섹션의 "연차" 블록 하위 항목을 복사 시 날짜 파싱
 - `MMDD` 또는 `MMDD~MMDD` 형식에서 마지막 날짜 추출
 - 마지막 날짜 < 오늘이면 해당 항목 제거 (체크된 할 일과 동일한 방식)
 - `DD=00`은 해당 월의 마지막 날로 처리 (예: `0900` = 9월 말)
 - 오전/오후 반차도 날짜 기준으로만 판단
 
-## 마일스톤 담당자 현황
-- 오른쪽 컬럼 복사 후 `scanMilestoneAssignees`로 담당자별 일감 수 집계
-- `MILESTONE_RE = /^(\d{4,6}|미정)\s*[-–—]/` 패턴으로 마일스톤 식별
-- 백로그 같은 카테고리 블록은 재귀 스캔으로 중첩 마일스톤도 집계
-- 각 마일스톤 첫 번째 자식에서 `이름(역할), 이름(역할)` 파싱
-- 일감 수 내림차순으로 정렬 후 `📊 담당자 현황` 블록으로 컬럼 하단에 추가
-- 이전 날짜에서 복사 시 기존 `📊 담당자 현황` 블록은 자동 제외 후 새로 생성
+## 장기업무 DB (`장기업무`)
+- DB ID: `9e80cbf822064d7dae69e6fbdbb6134c`
+- 보드 페이지 ID: `380e60ccff0c8121a545e0c5f7b9e233`
+- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select), `상태`(select), `담당자`(select), `역할`(multi_select), `업무현황`(rich_text)
+- 담당자 단위 행: 한 업무에 N명이면 N개 행 (칸반 그룹핑 최적화)
+- 뷰: 업무단위 보드(GROUP BY 상태, SORT BY 일정코드 ASC), 담당자별 보드(GROUP BY 담당자)
+- 사용자가 직접 입력 + `업무현황`을 매일 업데이트 → 매일 아침 스냅샷으로 일지에 기록
 
 ## Git Pre-push Hook
 push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채팅창에 출력

@@ -5,7 +5,7 @@
 **Notion Daily Log Bot** is a personal automation tool that runs every weekday morning via GitHub Actions.  
 It creates a new daily log page in Notion (cloned from the previous day), fetches weather data and iCloud Calendar events, then sends a morning briefing to a Telegram personal DM — all without touching your computer.
 
-[![Node.js](https://img.shields.io/badge/Node.js-20-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/Node.js-22-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-automated-2088FF?logo=github-actions&logoColor=white)](https://github.com/features/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=github-sponsors)](https://github.com/sponsors/korleinster)
@@ -16,7 +16,9 @@ It creates a new daily log page in Notion (cloned from the previous day), fetche
 
 | Feature | Description |
 |------|------|
-| 📄 **Auto Notion daily log** | Clones the previous day's page to create a new log, excluding completed to-dos |
+| 📄 **Auto Notion daily log** | Clones the previous day's personal section (todos, leave) to create a new daily page |
+| 📋 **Long-term task snapshot** | Queries a permanent Notion DB each morning and writes a text snapshot into the daily log |
+| 🗂 **Kanban board** | Permanent task DB with two board views: by status and by assignee |
 | 🌤 **Weather info** | Fetches today's weather via Open-Meteo API (free, no key required) |
 | 📆 **Calendar integration** | Shows today + next 3 days via iCloud CalDAV, supports recurring events |
 | 📬 **Telegram notifications** | Sends weather, schedule, and tasks to your personal DM every morning |
@@ -37,27 +39,44 @@ If this project has been useful, consider sponsoring. It makes a big difference 
 ```
 Daily Work Log (ROOT_PAGE_ID)
 └── 2026
-    └── 2026_04
-        └── 2026_04_28 (Tue)   ← daily page (created by script)
-        └── 2026_04_29 (Wed)
-        └── ...
+    └── 2026_06
+        └── 2026_06_15 (Mon)   ← daily page (created by script)
+            ├── 🔥 나의 업무 현황  (personal section: todos / leave / backlog)
+            ├── ---
+            ├── 📋 오늘의 장기업무 현황  (auto-generated snapshot)
+            │       • [진행중] 260701 신념의 탑 3층
+            │           • 임재호 (보스): 보스 추가 수정중
+            │           • 우양권 (레벨): 스포너 배치중
+            └── 🔗 장기업무 보드  (link to the Kanban page)
+
+📊 장기업무 (permanent, separate page)
+    ├── 뷰1: 업무단위 보드  (GROUP BY 상태)
+    └── 뷰2: 담당자별 보드  (GROUP BY 담당자)
 ```
 
-- Clones the previous day's page and updates only the date to create a new daily page
-- Each daily page has a 2-column layout (left: to-dos, right: project status)
-- Completed (checked) to-do items are excluded from the copy
+- Daily page clones only the personal section from the previous day (not the snapshot)
+- Completed to-dos and expired leave items are excluded from the copy
+- The snapshot is generated fresh each morning from the long-term task DB
 - On weekends, no log is created — only the Telegram message is sent
 
 ---
 
 ## 🚀 First-Run Bootstrap
 
-The script works by **cloning the previous daily log**. Before the first run, you need to manually create the first page in Notion.
+The script works by **cloning the personal section from the previous daily log**. Before the first run, you need to manually create the first page in Notion.
 
 1. Manually create the page path in Notion: `Daily Work Log > {Year} > {Year}_{Month}`
 2. Manually create a daily page in the format `{Year}_{Month}_{Day} ({Weekday})` (e.g. `2026_05_20 (Wed)`)
-3. Set up the 2-column layout manually (left: to-dos, right: project status)
-4. From then on, the script will auto-clone this page as its base
+3. Add your personal section at the top (todos, leave, backlog)
+4. From then on, the script will auto-clone only the personal section each day
+
+### Long-term Task DB setup (one-time)
+
+1. Create a `📊 장기업무` page in your Daily Work Log root
+2. Create a Notion database inside with this schema:
+   - `업무명` (title), `일정코드` (text), `카테고리` (select), `상태` (select), `담당자` (select), `역할` (multi-select), `업무현황` (text)
+3. Add two board views: grouped by `상태` and by `담당자`
+4. Add `WORKTASK_DB_ID` and `BOARD_PAGE_ID` to GitHub Secrets and local `.env`
 
 ---
 
@@ -118,6 +137,8 @@ Please check!
 | `TELEGRAM_CHAT_ID` | Telegram personal DM ID |
 | `APPLE_ID` | Apple ID email (for iCloud Calendar; skipped if missing) |
 | `APPLE_APP_PASSWORD` | Apple app-specific password (for iCloud Calendar; skipped if missing) |
+| `WORKTASK_DB_ID` | Long-term task DB ID (for daily snapshot generation) |
+| `BOARD_PAGE_ID` | Long-term task board page ID (linked at the bottom of each daily page) |
 
 ### Local only (`.env` + pre-push hook)
 
@@ -146,7 +167,7 @@ Please check!
 - **Auto run**: Mon–Fri at 05:00 KST (`cron: '0 20 * * 0-4'` in UTC)
   - UTC Sun–Thu 20:00 = KST Mon–Fri 05:00
   - No automatic run on weekends — weekend logic runs only on manual trigger
-- **Node.js version**: 20
+- **Node.js version**: 22
 - **Manual run**: `gh workflow run daily-work-log.yml`
 - **Usage stats**: GitHub → Settings → Billing and plans
 

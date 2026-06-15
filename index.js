@@ -7,6 +7,8 @@ const notion = new Client({ auth: process.env.NOTION_TOKEN });
 const ROOT_PAGE_ID = process.env.DAILY_LOG_PAGE_ID;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const WORKTASK_DB_ID = process.env.WORKTASK_DB_ID;
+const BOARD_PAGE_ID = process.env.BOARD_PAGE_ID;
 
 const REQUIRED_ENV = ['NOTION_TOKEN', 'DAILY_LOG_PAGE_ID', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
 for (const key of REQUIRED_ENV) {
@@ -198,7 +200,6 @@ function formatCalendarSection(events) {
 
   const lines = [];
 
-  // 오늘 일정
   lines.push('\n\n<b>📆 오늘 일정</b>');
   if (todayEvents.length === 0) {
     lines.push('일정 없음');
@@ -217,7 +218,6 @@ function formatCalendarSection(events) {
     }
   }
 
-  // 다가오는 일정 (항상 3일치 표시)
   lines.push('\n<b>📅 다가오는 일정</b>');
   for (let offset = 1; offset <= 3; offset++) {
     const d = new Date(todayDate.getTime() + offset * 24 * 60 * 60 * 1000);
@@ -351,84 +351,6 @@ function parseLeaveDateRange(text, year) {
   return null;
 }
 
-// "최예균(역할), 우양권(역할)" 형태에서 이름 배열 추출
-function parseAssigneesFromText(text) {
-  const clean = text.replace(/\*+/g, '').trim();
-  const names = [];
-  let depth = 0, current = '';
-  for (const ch of clean) {
-    if (ch === '(') { depth++; current += ch; }
-    else if (ch === ')') { depth--; current += ch; }
-    else if (ch === ',' && depth === 0) {
-      const m = current.trim().match(/^([가-힣]{2,4})/);
-      if (m) names.push(m[1]);
-      current = '';
-    } else { current += ch; }
-  }
-  const m = current.trim().match(/^([가-힣]{2,4})/);
-  if (m) names.push(m[1]);
-  return names;
-}
-
-const MILESTONE_RE = /^(\d{4,6}|미정)\s*[-–—]/;
-
-// 단축 이름("효섭") → 풀네임("임효섭") 매핑 생성
-function buildShortNameMap(names) {
-  const fullNames = names.filter(n => n.length >= 3);
-  const map = {};
-  for (const name of names) {
-    if (name.length < 3) {
-      const match = fullNames.find(fn => fn.endsWith(name));
-      if (match) map[name] = match;
-    }
-  }
-  return map;
-}
-
-// 마일스톤 블록 재귀 스캔 (내부용): 원본 이름·횟수 수집
-async function _gatherMilestoneData(blockId, rawCounts, allNames) {
-  const blocks = await getAllBlocks(blockId);
-  for (const block of blocks) {
-    if (block.type !== 'bulleted_list_item') continue;
-    const text = extractText(block.bulleted_list_item.rich_text);
-    if (text === '📊 담당자 현황') continue;
-
-    if (MILESTONE_RE.test(text) && block.has_children) {
-      const children = await getAllBlocks(block.id);
-      if (children.length > 0) {
-        const fc = children[0];
-        const fcText = fc[fc.type]?.rich_text ? extractText(fc[fc.type].rich_text) : '';
-        const fcClean = fcText.replace(/\*+/g, '').trim();
-        // "보스 - 예진님 → 발주 완료" 같은 상태 라인은 제외
-        const isStatusLine = /→/.test(fcClean) || /^[가-힣]{1,3}\s*[-–—]\s/.test(fcClean);
-        if (/^[가-힣]{2,4}/.test(fcClean) && !isStatusLine) {
-          for (const name of parseAssigneesFromText(fcText)) {
-            allNames.add(name);
-            rawCounts[name] = (rawCounts[name] || 0) + 1;
-          }
-        }
-      }
-    } else if (!MILESTONE_RE.test(text) && block.has_children) {
-      await _gatherMilestoneData(block.id, rawCounts, allNames);
-    }
-  }
-}
-
-// 담당자별 일감 수 집계 (단축 이름은 풀네임으로 통합)
-async function scanMilestoneAssignees(blockId) {
-  const rawCounts = {};
-  const allNames = new Set();
-  await _gatherMilestoneData(blockId, rawCounts, allNames);
-
-  const nameMap = buildShortNameMap([...allNames]);
-  const counts = {};
-  for (const [name, count] of Object.entries(rawCounts)) {
-    const canonical = nameMap[name] || name;
-    counts[canonical] = (counts[canonical] || 0) + count;
-  }
-  return counts;
-}
-
 function removeNulls(obj) {
   if (typeof obj !== 'object' || obj === null) return obj;
   if (Array.isArray(obj)) return obj.map(removeNulls);
@@ -461,8 +383,6 @@ function convertBlockFlat(block, dateInfo) {
   const type = block.type;
   if (UNSUPPORTED_TYPES.includes(type)) return null;
   if (!block[type]) return { object: 'block', type: 'paragraph', paragraph: { rich_text: [] } };
-  // 자동 생성된 담당자 현황은 복사 제외 (매일 새로 생성)
-  if (block[type]?.rich_text && extractText(block[type].rich_text) === '📊 담당자 현황') return null;
 
   const blockData = removeNulls(JSON.parse(JSON.stringify(block[type])));
 
@@ -499,7 +419,6 @@ async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo, filterPas
   const sourceBlocksFiltered = [];
 
   for (const src of sourceBlocks) {
-    // 연차 섹션 내 지난 날짜 항목 제거
     if (filterPastLeaves) {
       const t = src.type;
       const text = src[t]?.rich_text ? extractText(src[t].rich_text) : '';
@@ -533,64 +452,111 @@ async function appendBlocksRecursive(parentId, sourceBlocks, dateInfo, filterPas
   }
 }
 
-async function appendColumnList(pageId, sourceColumnListId, dateInfo, addedItems) {
-  const sourceColumns = await getAllBlocks(sourceColumnListId);
-  const columnsForCreation = [];
-  const sourceColumnsFiltered = [];
+// ──────────────────────────────────────────────
+// 개인 섹션 블록 추출 (구/신 레이아웃 모두 지원)
+// ──────────────────────────────────────────────
+async function findPersonalBlocks(sourcePageId) {
+  const blocks = await getAllBlocks(sourcePageId);
 
-  for (const col of sourceColumns) {
-    if (col.type !== 'column') continue;
-    columnsForCreation.push({ object: 'block', type: 'column', column: { children: [{ object: 'block', type: 'paragraph', paragraph: { rich_text: [] } }] } });
-    sourceColumnsFiltered.push(col);
+  // 구 레이아웃: column_list가 있으면 첫 번째 컬럼에서 개인 블록 추출
+  const colList = blocks.find(b => b.type === 'column_list');
+  if (colList) {
+    const columns = await getAllBlocks(colList.id);
+    if (columns.length > 0) {
+      return await getAllBlocks(columns[0].id);
+    }
+    return [];
   }
 
-  if (columnsForCreation.length < 2) throw new Error('column이 2개 이상 필요합니다.');
+  // 신 레이아웃: divider / link_to_page / 📋로 시작하는 블록 이전까지
+  const personal = [];
+  for (const block of blocks) {
+    if (block.type === 'divider' || block.type === 'link_to_page') break;
+    const text = block[block.type]?.rich_text ? extractText(block[block.type].rich_text) : '';
+    if (text.startsWith('📋')) break;
+    personal.push(block);
+  }
+  return personal;
+}
 
-  const res = await withRetry(() => notion.blocks.children.append({
-    block_id: pageId,
-    children: [{ object: 'block', type: 'column_list', column_list: { children: columnsForCreation } }],
+// ──────────────────────────────────────────────
+// 장기업무 DB 스냅샷 섹션 생성
+// ──────────────────────────────────────────────
+async function buildSnapshotSection(dayPageId, dbId) {
+  // heading
+  await withRetry(() => notion.blocks.children.append({
+    block_id: dayPageId,
+    children: [{
+      object: 'block', type: 'heading_2',
+      heading_2: { rich_text: [{ type: 'text', text: { content: '📋 오늘의 장기업무 현황' } }] },
+    }],
   }));
 
-  const newColumnListId = res.results[0].id;
-  const newColumns = await getAllBlocks(newColumnListId);
+  if (!dbId) return;
 
-  for (let i = 0; i < newColumns.length; i++) {
-    const newCol = newColumns[i];
-    const srcCol = sourceColumnsFiltered[i];
-    const placeholders = await getAllBlocks(newCol.id);
-    for (const p of placeholders) {
-      try { await notion.blocks.delete({ block_id: p.id }); } catch (e) { console.warn('블록 삭제 실패:', p.id, e.message); }
-    }
-    const subBlocks = await getAllBlocks(srcCol.id);
-    if (subBlocks.length > 0) {
-      await appendBlocksRecursive(newCol.id, subBlocks, dateInfo);
-      if (i === 0) {
-        await collectTodos(subBlocks, addedItems);
-      }
-      if (i === 1) {
-        // 오른쪽(마일스톤) 컬럼: 담당자별 일감 수 집계 후 현황 블록 추가
-        const counts = await scanMilestoneAssignees(srcCol.id);
-        const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-        if (entries.length > 0) {
-          const headerRes = await withRetry(() => notion.blocks.children.append({
-            block_id: newCol.id,
-            children: [{
-              object: 'block', type: 'bulleted_list_item',
-              bulleted_list_item: {
-                rich_text: [{ type: 'text', text: { content: '📊 담당자 현황' }, annotations: { bold: true, color: 'blue_background' } }],
-              },
-            }],
-          }));
-          await withRetry(() => notion.blocks.children.append({
-            block_id: headerRes.results[0].id,
-            children: entries.map(([name, count]) => ({
-              object: 'block', type: 'bulleted_list_item',
-              bulleted_list_item: { rich_text: [{ type: 'text', text: { content: `${name} ${count}건` } }] },
-            })),
-          }));
-        }
-      }
-    }
+  // DB 전체 조회 (일정코드 오름차순)
+  const rows = [];
+  let cursor;
+  while (true) {
+    const res = await withRetry(() => notion.databases.query({
+      database_id: dbId,
+      sorts: [{ property: '일정코드', direction: 'ascending' }],
+      page_size: 100,
+      ...(cursor ? { start_cursor: cursor } : {}),
+    }));
+    rows.push(...res.results);
+    if (!res.has_more) break;
+    cursor = res.next_cursor;
+  }
+
+  // 업무명 기준으로 그룹핑 (일정코드 정렬 유지)
+  const groups = new Map();
+  for (const row of rows) {
+    const p = row.properties;
+    const propText = prop => prop?.rich_text?.map(t => t.plain_text).join('') || prop?.title?.map(t => t.plain_text).join('') || '';
+    const 업무명 = propText(p['업무명']);
+    const 일정코드 = propText(p['일정코드']);
+    const 상태 = p['상태']?.select?.name || '';
+    const 담당자 = p['담당자']?.select?.name || '';
+    const 역할 = (p['역할']?.multi_select || []).map(r => r.name).join('/');
+    const 업무현황 = propText(p['업무현황']);
+
+    const key = `${일정코드}|||${업무명}`;
+    if (!groups.has(key)) groups.set(key, { 업무명, 일정코드, 상태, members: [] });
+    if (담당자) groups.get(key).members.push({ 담당자, 역할, 업무현황 });
+  }
+
+  if (groups.size === 0) return;
+
+  // 헤더 블록 먼저 append
+  const groupList = [...groups.values()];
+  const headerBlocks = groupList.map(({ 업무명, 일정코드, 상태 }) => {
+    const prefix = 일정코드 ? `${일정코드} ` : '';
+    return {
+      object: 'block', type: 'bulleted_list_item',
+      bulleted_list_item: { rich_text: [{ type: 'text', text: { content: `[${상태 || '—'}] ${prefix}${업무명}` } }] },
+    };
+  });
+
+  const headerRes = await withRetry(() => notion.blocks.children.append({
+    block_id: dayPageId,
+    children: headerBlocks,
+  }));
+
+  // 각 헤더 블록에 담당자 행 추가
+  const count = Math.min(headerRes.results.length, groupList.length);
+  for (let i = 0; i < count; i++) {
+    const { members } = groupList[i];
+    if (members.length === 0) continue;
+    await withRetry(() => notion.blocks.children.append({
+      block_id: headerRes.results[i].id,
+      children: members.map(({ 담당자, 역할, 업무현황 }) => ({
+        object: 'block', type: 'bulleted_list_item',
+        bulleted_list_item: {
+          rich_text: [{ type: 'text', text: { content: `${담당자}${역할 ? ` (${역할})` : ''}: ${업무현황 || '—'}` } }],
+        },
+      })),
+    }));
   }
 }
 
@@ -637,14 +603,8 @@ ${weather}${calendarText}
     if (existingDayPage) {
       console.log('⚠️ 오늘 날짜 페이지가 이미 존재합니다. todo 포함 재전송합니다.');
       const addedItems = [];
-      const existingColumnListId = await findFirstColumnList(existingDayPage.id);
-      if (existingColumnListId) {
-        const existingColumns = await getAllBlocks(existingColumnListId);
-        if (existingColumns.length > 0) {
-          const firstColBlocks = await getAllBlocks(existingColumns[0].id);
-          await collectTodos(firstColBlocks, addedItems);
-        }
-      }
+      const personalBlocks = await findPersonalBlocks(existingDayPage.id);
+      await collectTodos(personalBlocks, addedItems);
       const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';
       await sendTelegram(
 `🌅 좋은 아침이에요! 오늘도 화이팅입니다 😊
@@ -667,14 +627,41 @@ ${weather}${calendarText}${itemsText}
     if (!sourceDayPage) throw new Error('복사할 이전 일지를 찾을 수 없습니다. 첫 일지를 수동으로 작성해주세요.');
     console.log(`📋 소스 페이지: ${sourceDayPage.title}`);
 
-    const sourceColumnListId = await findFirstColumnList(sourceDayPage.id);
-    if (!sourceColumnListId) throw new Error(`소스 페이지(${sourceDayPage.title})에서 내용을 찾을 수 없습니다.`);
+    // 소스 페이지에서 개인 섹션 블록 추출
+    const sourcePersonalBlocks = await findPersonalBlocks(sourceDayPage.id);
+    if (sourcePersonalBlocks.length === 0) throw new Error(`소스 페이지(${sourceDayPage.title})에서 개인 섹션을 찾을 수 없습니다.`);
 
+    // 오늘 페이지 생성
     const dayPageId = await findOrCreatePage(monthPageId, dayPageTitle);
-    const addedItems = [];
-    await appendColumnList(dayPageId, sourceColumnListId, dateInfo, addedItems);
+
+    // 1. 개인 섹션 복제 (당장 할 거 / 연차 / 나중에)
+    await appendBlocksRecursive(dayPageId, sourcePersonalBlocks, dateInfo);
+
+    // 2. 구분선
+    await withRetry(() => notion.blocks.children.append({
+      block_id: dayPageId,
+      children: [{ object: 'block', type: 'divider', divider: {} }],
+    }));
+
+    // 3. 장기업무 스냅샷 섹션 (heading + DB 조회 결과)
+    await buildSnapshotSection(dayPageId, WORKTASK_DB_ID);
+
+    // 4. 장기업무 보드 링크
+    if (BOARD_PAGE_ID) {
+      await withRetry(() => notion.blocks.children.append({
+        block_id: dayPageId,
+        children: [{
+          object: 'block', type: 'link_to_page',
+          link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID },
+        }],
+      }));
+    }
+
     console.log(`✅ 오늘(${dayPageTitle}) 페이지 생성 완료`);
 
+    // todo 수집 (텔레그램 메시지용)
+    const addedItems = [];
+    await collectTodos(sourcePersonalBlocks, addedItems);
     const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';
 
     await sendTelegram(

@@ -509,6 +509,14 @@ async function buildSnapshotSection(dayPageId, dbId) {
     cursor = res.next_cursor;
   }
 
+  // 각 행의 마지막 댓글 수집
+  const commentMap = {};
+  for (const row of rows) {
+    const res = await withRetry(() => notion.comments.list({ block_id: row.id, page_size: 100 }));
+    const last = res.results[res.results.length - 1];
+    commentMap[row.id] = last?.rich_text?.map(t => t.plain_text).join('') || '';
+  }
+
   // 업무명 기준으로 그룹핑 (일정코드 정렬 유지)
   const groups = new Map();
   for (const row of rows) {
@@ -519,7 +527,7 @@ async function buildSnapshotSection(dayPageId, dbId) {
     const 상태 = p['상태']?.select?.name || '';
     const 담당자 = p['담당자']?.select?.name || '';
     const 역할 = (p['역할']?.multi_select || []).map(r => r.name).join('/');
-    const 업무현황 = propText(p['업무현황']);
+    const 업무현황 = commentMap[row.id] || '';
 
     const key = `${일정코드}|||${업무명}`;
     if (!groups.has(key)) groups.set(key, { 업무명, 일정코드, 상태, members: [] });

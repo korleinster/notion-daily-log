@@ -66,9 +66,11 @@
 
 ### buildSnapshotSection(dayPageId, dbId)
 - `장기업무` DB를 `일정코드` 오름차순으로 전체 조회
+- 각 행에 대해 `notion.comments.list({ block_id: row.id })` 호출 → 마지막 댓글을 업무현황으로 사용
 - `업무명` 기준으로 그룹핑 → 헤더 블록(`[상태] 일정코드 업무명`) append
-- 각 헤더 블록에 담당자 서브 블록(`담당자 (역할): 업무현황 or —`) 추가
+- 각 헤더 블록에 담당자 서브 블록(`담당자 (역할): 마지막댓글 or —`) 추가
 - `WORKTASK_DB_ID` 없으면 heading만 append하고 조기 반환
+- 댓글 API 사용: Notion 인테그레이션에 **Read comments + Insert comments** 권한 필요
 
 ## 연차 자동 처리
 - 개인 섹션의 "연차" 블록 하위 항목을 복사 시 날짜 파싱
@@ -80,7 +82,8 @@
 ## 장기업무 DB (`장기업무`)
 - DB ID: `9e80cbf822064d7dae69e6fbdbb6134c`
 - 보드 페이지 ID: `380e60ccff0c8121a545e0c5f7b9e233`
-- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select), `상태`(select), `담당자`(select), `역할`(multi_select), `업무현황`(rich_text)
+- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select), `상태`(select), `담당자`(select), `역할`(multi_select)
+- 진행상황은 각 행(페이지)의 **댓글**로 관리 (`업무현황` 속성은 제거됨)
 - 담당자 단위 행: 한 업무에 N명이면 N개 행 (칸반 그룹핑 최적화)
 - 뷰: 업무단위 보드(GROUP BY 상태, SORT BY 일정코드 ASC), 담당자별 보드(GROUP BY 담당자)
 - 사용자가 직접 입력 + `업무현황`을 매일 업데이트 → 매일 아침 스냅샷으로 일지에 기록

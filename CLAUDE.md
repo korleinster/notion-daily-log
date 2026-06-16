@@ -10,7 +10,8 @@
 
 ### index.js (메인 스크립트)
 - `NOTION_TOKEN` — Notion Integration 토큰
-- `DAILY_LOG_PAGE_ID` — 일일업무일지 페이지 ID (`0a1501a086b945b1b84b7dfc8b44bf52`)
+- `DAILY_LOG_PAGE_ID` — 일일업무일지 루트 페이지 ID (`0a1501a086b945b1b84b7dfc8b44bf52`)
+- `FIXED_PAGE_ID` — 고정 작업 페이지 ID (`381e60ccff0c81e2a2dacc14f6fa0f76`, "📌 오늘의 업무")
 - `TELEGRAM_BOT_TOKEN` — 텔레그램 봇 토큰
 - `TELEGRAM_CHAT_ID` — 텔레그램 개인 DM ID (`5515513986`, notionDailyWorkLog 봇과의 개인 대화)
 - `APPLE_ID` — Apple ID 이메일
@@ -35,18 +36,25 @@
 - `.git/hooks/pre-push` — bash 진입점
 - `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
 
-## 일일 일지 레이아웃 (신 레이아웃)
+## Notion 구조
 
-새 페이지 생성 시 구조:
 ```
-🔥 나의 업무 현황  (개인 섹션: 당장 할 거 / 연차 / 나중에)
----  (divider)
-📋 오늘의 장기업무 현황  (heading_2)
-  • [상태] 일정코드 업무명
-    • 담당자 (역할): 마지막 댓글 (없으면 —)
-  • ...
-🔗 장기업무 보드  (link_to_page → BOARD_PAGE_ID)
+일일업무일지 (ROOT)
+├── 📌 오늘의 업무  ← 고정 작업 페이지 (FIXED_PAGE_ID), 항상 이 페이지에서 작업
+│     ├── 🔥 나의 업무 현황  (체크박스 / 연차 등 — 사용자가 직접 관리)
+│     ├── ---
+│     ├── 📋 오늘의 장기업무 현황  (매일 아침 자동 갱신)
+│     └── 🔗 장기업무 보드 →
+├── 2026년
+│   └── 2026_06
+│       ├── 2026_06_16 (화)  ← 날짜 백업 (고정 페이지 복제본)
+│       └── ...
+└── 📊 장기업무  (영구 DB 페이지)
 ```
+
+### 매일 아침 동작
+- **최초 실행**: 고정 페이지 개인섹션 → 날짜 백업 생성 + 고정 페이지 완료항목 삭제 + 스냅샷 갱신
+- **중복 실행**: 고정 페이지 스냅샷만 갱신 후 텔레그램 재전송
 
 ## index.js 주요 구현
 - 시작 시 필수 환경변수 검증 (`REQUIRED_ENV` 목록)
@@ -58,6 +66,15 @@
 - `appendBlocksRecursive` 인덱스 안전성 (`Math.min` 사용)
 - `collectTodos`에서 `UNSUPPORTED_TYPES` 블록 건너뜀
 - Notion API로 일일 로그 페이지 생성/업데이트
+
+### clearPersonalSection(fixedPageId, dateInfo)
+- 고정 페이지의 개인 섹션(divider/📋 이전까지) 순회
+- 체크된 할 일 → `notion.blocks.delete`
+- 각 블록 자식을 `deleteCheckedTodosRecursive` 로 재귀 처리 (연차 자식은 만료 날짜 필터링 포함)
+
+### refreshSnapshotInPage(fixedPageId)
+- 고정 페이지에서 `divider` 또는 `📋` heading_2 이후 블록을 전부 삭제
+- divider → `buildSnapshotSection` → `link_to_page` 순으로 재추가
 
 ### findPersonalBlocks(sourcePageId)
 - 구 레이아웃(column_list): 첫 번째 컬럼의 블록 반환

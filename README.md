@@ -16,7 +16,8 @@ It creates a new daily log page in Notion (cloned from the previous day), fetche
 
 | Feature | Description |
 |------|------|
-| 📄 **Auto Notion daily log** | Clones the previous day's personal section (todos, leave) to create a new daily page |
+| 📌 **Fixed working page** | User always works on the same page (`📌 오늘의 업무`); no need to navigate to a new page each day |
+| 📄 **Daily backup** | Each morning, clones the fixed page's personal section into a dated backup page (year/month hierarchy) |
 | 📋 **Long-term task snapshot** | Queries a permanent Notion DB each morning; reads the last comment on each row as the status and writes a snapshot into the daily log |
 | 🗂 **Kanban board** | Permanent task DB with two board views (by status, by assignee), both sorted by schedule code |
 | 🌤 **Weather info** | Fetches today's weather via Open-Meteo API (free, no key required) |
@@ -38,37 +39,36 @@ If this project has been useful, consider sponsoring. It makes a big difference 
 
 ```
 Daily Work Log (ROOT_PAGE_ID)
-└── 2026
-    └── 2026_06
-        └── 2026_06_15 (Mon)   ← daily page (created by script)
-            ├── 🔥 나의 업무 현황  (personal section: todos / leave / backlog)
-            ├── ---
-            ├── 📋 오늘의 장기업무 현황  (auto-generated snapshot)
-            │       • [진행중] 260701 신념의 탑 3층
-            │           • 임재호 (보스): 보스 추가 수정중
-            │           • 우양권 (레벨): 스포너 배치중
-            └── 🔗 장기업무 보드  (link to the Kanban page)
-
-📊 장기업무 (permanent, separate page)
-    ├── 뷰1: 업무단위 보드  (GROUP BY 상태)
-    └── 뷰2: 담당자별 보드  (GROUP BY 담당자)
+├── 📌 오늘의 업무          ← Fixed working page (FIXED_PAGE_ID) — always stay here
+│     ├── 🔥 나의 업무 현황   (todos / leave — user manages directly)
+│     ├── ---
+│     ├── 📋 오늘의 장기업무 현황  (auto-refreshed every morning)
+│     └── 🔗 장기업무 보드 →
+│
+├── 2026
+│   └── 2026_06
+│       └── 2026_06_16 (Tue)  ← dated backup (cloned from fixed page)
+│
+└── 📊 장기업무              ← permanent Kanban DB
+    ├── 업무단위 보드  (GROUP BY 상태)
+    └── 담당자별 보드  (GROUP BY 담당자)
 ```
 
-- Daily page clones only the personal section from the previous day (not the snapshot)
-- Completed to-dos and expired leave items are excluded from the copy
-- The snapshot is generated fresh each morning from the long-term task DB
-- On weekends, no log is created — only the Telegram message is sent
+- User always works on the fixed page — no need to navigate to a new page each day
+- Each morning: fixed page's personal section is backed up as a dated page, then completed todos are removed and the snapshot is refreshed
+- Completed to-dos and expired leave items are removed from the fixed page (not the backup)
+- On weekends, no backup is created — only the Telegram message is sent
 
 ---
 
 ## 🚀 First-Run Bootstrap
 
-The script works by **cloning the personal section from the previous daily log**. Before the first run, you need to manually create the first page in Notion.
+The script uses a single **fixed working page** as the source for all daily backups.
 
-1. Manually create the page path in Notion: `Daily Work Log > {Year} > {Year}_{Month}`
-2. Manually create a daily page in the format `{Year}_{Month}_{Day} ({Weekday})` (e.g. `2026_05_20 (Wed)`)
-3. Add your personal section at the top (todos, leave, backlog)
-4. From then on, the script will auto-clone only the personal section each day
+1. Create a page titled `📌 오늘의 업무` directly under the Daily Work Log root page
+2. Add your personal section (todos, leave, backlog)
+3. Set `FIXED_PAGE_ID` to this page's ID in `.env` and GitHub Secrets
+4. From then on, the script will back up this page each morning and refresh its snapshot
 
 ### Long-term Task DB setup (one-time)
 
@@ -140,7 +140,8 @@ Please check!
 | `APPLE_ID` | Apple ID email (for iCloud Calendar; skipped if missing) |
 | `APPLE_APP_PASSWORD` | Apple app-specific password (for iCloud Calendar; skipped if missing) |
 | `WORKTASK_DB_ID` | Long-term task DB ID (for daily snapshot; reads last comment per row) |
-| `BOARD_PAGE_ID` | Long-term task board page ID (linked at the bottom of each daily page) |
+| `BOARD_PAGE_ID` | Long-term task board page ID (linked at the bottom of the fixed page) |
+| `FIXED_PAGE_ID` | Fixed working page ID (`📌 오늘의 업무`) — the page the user always works from |
 
 ### Local only (`.env` + pre-push hook)
 

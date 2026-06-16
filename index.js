@@ -9,6 +9,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const WORKTASK_DB_ID = process.env.WORKTASK_DB_ID;
 const BOARD_PAGE_ID = process.env.BOARD_PAGE_ID;
+const FIXED_PAGE_ID = process.env.FIXED_PAGE_ID;
 
 const REQUIRED_ENV = ['NOTION_TOKEN', 'DAILY_LOG_PAGE_ID', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
 for (const key of REQUIRED_ENV) {
@@ -569,6 +570,93 @@ async function buildSnapshotSection(dayPageId, dbId) {
 }
 
 // ──────────────────────────────────────────────
+// 고정 페이지 관리
+// ──────────────────────────────────────────────
+
+// 체크된 할 일 및 만료 연차를 재귀적으로 삭제
+async function deleteCheckedTodosRecursive(parentId, dateInfo, filterExpiredLeaves = false) {
+  const today = new Date(Date.UTC(Number(dateInfo.year), Number(dateInfo.month) - 1, Number(dateInfo.day)));
+  const blocks = await getAllBlocks(parentId);
+  for (const block of blocks) {
+    if (isCheckedTodo(block)) {
+      await withRetry(() => notion.blocks.delete({ block_id: block.id }));
+      continue;
+    }
+    if (filterExpiredLeaves) {
+      const t = block.type;
+      const text = block[t]?.rich_text ? extractText(block[t].rich_text) : '';
+      const dateRange = parseLeaveDateRange(text, dateInfo.year);
+      if (dateRange && dateRange.end < today) {
+        await withRetry(() => notion.blocks.delete({ block_id: block.id }));
+        continue;
+      }
+    }
+    if (block.has_children) {
+      const t = block.type;
+      const text = block[t]?.rich_text ? extractText(block[t].rich_text) : '';
+      await deleteCheckedTodosRecursive(block.id, dateInfo, text === '연차');
+    }
+  }
+}
+
+// 고정 페이지 개인 섹션에서 완료 항목 및 만료 연차 삭제
+async function clearPersonalSection(fixedPageId, dateInfo) {
+  const today = new Date(Date.UTC(Number(dateInfo.year), Number(dateInfo.month) - 1, Number(dateInfo.day)));
+  const blocks = await getAllBlocks(fixedPageId);
+  for (const block of blocks) {
+    if (block.type === 'divider' || block.type === 'link_to_page') break;
+    const t = block.type;
+    const text = block[t]?.rich_text ? extractText(block[t].rich_text) : '';
+    if (text.startsWith('📋')) break;
+
+    if (isCheckedTodo(block)) {
+      await withRetry(() => notion.blocks.delete({ block_id: block.id }));
+      continue;
+    }
+    if (block.has_children) {
+      await deleteCheckedTodosRecursive(block.id, dateInfo, text === '연차');
+    }
+  }
+}
+
+// 고정 페이지 하단 divider+스냅샷 삭제 후 재생성
+async function refreshSnapshotInPage(fixedPageId) {
+  const blocks = await getAllBlocks(fixedPageId);
+
+  // divider 또는 📋 heading_2 이후 블록 전부 삭제 (divider 포함)
+  let deleteFromIdx = -1;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block.type === 'divider' && deleteFromIdx === -1) {
+      deleteFromIdx = i;
+      break;
+    }
+    if (block.type === 'heading_2') {
+      const text = extractText(block.heading_2.rich_text);
+      if (text.startsWith('📋')) { deleteFromIdx = i; break; }
+    }
+  }
+  if (deleteFromIdx >= 0) {
+    for (let i = deleteFromIdx; i < blocks.length; i++) {
+      await withRetry(() => notion.blocks.delete({ block_id: blocks[i].id }));
+    }
+  }
+
+  // divider + 새 스냅샷 + 보드 링크 추가
+  await withRetry(() => notion.blocks.children.append({
+    block_id: fixedPageId,
+    children: [{ object: 'block', type: 'divider', divider: {} }],
+  }));
+  await buildSnapshotSection(fixedPageId, WORKTASK_DB_ID);
+  if (BOARD_PAGE_ID) {
+    await withRetry(() => notion.blocks.children.append({
+      block_id: fixedPageId,
+      children: [{ object: 'block', type: 'link_to_page', link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID } }],
+    }));
+  }
+}
+
+// ──────────────────────────────────────────────
 // Main
 // ──────────────────────────────────────────────
 async function main() {
@@ -603,15 +691,18 @@ ${weather}${calendarText}
     }
 
     // 평일만 Notion 접근
+    if (!FIXED_PAGE_ID) throw new Error('FIXED_PAGE_ID 환경변수가 설정되지 않았습니다.');
+
     const yearPageId = await findOrCreatePage(ROOT_PAGE_ID, `${year}년`);
     const monthPageId = await findOrCreatePage(yearPageId, `${year}_${month}`);
-    const existingDayPage = await findPage(monthPageId, dayPageTitle);
+    const existingBackup = await findPage(monthPageId, dayPageTitle);
 
-    // 평일 중복: 기존 페이지에서 todo 읽어서 포함 전송
-    if (existingDayPage) {
-      console.log('⚠️ 오늘 날짜 페이지가 이미 존재합니다. todo 포함 재전송합니다.');
+    // 중복 실행: 스냅샷만 갱신 후 재전송
+    if (existingBackup) {
+      console.log('⚠️ 오늘 백업이 이미 존재합니다. 스냅샷 갱신 후 재전송합니다.');
+      await refreshSnapshotInPage(FIXED_PAGE_ID);
       const addedItems = [];
-      const personalBlocks = await findPersonalBlocks(existingDayPage.id);
+      const personalBlocks = await findPersonalBlocks(FIXED_PAGE_ID);
       await collectTodos(personalBlocks, addedItems);
       const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';
       await sendTelegram(
@@ -620,54 +711,37 @@ ${weather}${calendarText}
 📅 <b>${todayStr} ${dayName}요일</b>
 ${weather}${calendarText}${itemsText}
 
-이미 일지가 있어서 다시 한 번 보내드렸어요~ 📋`
+이미 백업이 있어서 스냅샷 갱신 후 다시 보내드렸어요~ 📋`
       );
       return;
     }
 
-    // 평일 최초: 일지 생성
-    let sourceDayPage = await findLatestDayPage(monthPageId);
-    if (!sourceDayPage) {
-      console.log(`🔍 현재 달에 일 페이지 없음. 이전 달에서 찾는 중...`);
-      sourceDayPage = await findPrevMonthLatestDayPage(year, month);
-    }
+    // 최초 실행: 고정 페이지 → 날짜 백업 생성 + 고정 페이지 갱신
+    const sourcePersonalBlocks = await findPersonalBlocks(FIXED_PAGE_ID);
+    if (sourcePersonalBlocks.length === 0) throw new Error('고정 페이지(📌 오늘의 업무)에서 개인 섹션을 찾을 수 없습니다.');
 
-    if (!sourceDayPage) throw new Error('복사할 이전 일지를 찾을 수 없습니다. 첫 일지를 수동으로 작성해주세요.');
-    console.log(`📋 소스 페이지: ${sourceDayPage.title}`);
-
-    // 소스 페이지에서 개인 섹션 블록 추출
-    const sourcePersonalBlocks = await findPersonalBlocks(sourceDayPage.id);
-    if (sourcePersonalBlocks.length === 0) throw new Error(`소스 페이지(${sourceDayPage.title})에서 개인 섹션을 찾을 수 없습니다.`);
-
-    // 오늘 페이지 생성
-    const dayPageId = await findOrCreatePage(monthPageId, dayPageTitle);
-
-    // 1. 개인 섹션 복제 (당장 할 거 / 연차 / 나중에)
-    await appendBlocksRecursive(dayPageId, sourcePersonalBlocks, dateInfo);
-
-    // 2. 구분선
+    // 1. 날짜 백업 생성 (연/월 계층)
+    const backupPageId = await findOrCreatePage(monthPageId, dayPageTitle);
+    await appendBlocksRecursive(backupPageId, sourcePersonalBlocks, dateInfo);
     await withRetry(() => notion.blocks.children.append({
-      block_id: dayPageId,
+      block_id: backupPageId,
       children: [{ object: 'block', type: 'divider', divider: {} }],
     }));
-
-    // 3. 장기업무 스냅샷 섹션 (heading + DB 조회 결과)
-    await buildSnapshotSection(dayPageId, WORKTASK_DB_ID);
-
-    // 4. 장기업무 보드 링크
+    await buildSnapshotSection(backupPageId, WORKTASK_DB_ID);
     if (BOARD_PAGE_ID) {
       await withRetry(() => notion.blocks.children.append({
-        block_id: dayPageId,
-        children: [{
-          object: 'block', type: 'link_to_page',
-          link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID },
-        }],
+        block_id: backupPageId,
+        children: [{ object: 'block', type: 'link_to_page', link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID } }],
       }));
     }
+    console.log(`✅ 백업 생성: ${dayPageTitle}`);
 
-    console.log(`✅ 오늘(${dayPageTitle}) 페이지 생성 완료`);
+    // 2. 고정 페이지: 완료 항목 삭제 + 스냅샷 갱신
+    await clearPersonalSection(FIXED_PAGE_ID, dateInfo);
+    await refreshSnapshotInPage(FIXED_PAGE_ID);
+    console.log('✅ 고정 페이지 갱신 완료');
 
-    // todo 수집 (텔레그램 메시지용)
+    // 3. 텔레그램 전송 (백업 생성 전 개인 섹션 기준으로 할 일 수집)
     const addedItems = [];
     await collectTodos(sourcePersonalBlocks, addedItems);
     const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';

@@ -34,4 +34,5 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           WORKTASK_DB_ID: ${{ secrets.WORKTASK_DB_ID }}
           BOARD_PAGE_ID: ${{ secrets.BOARD_PAGE_ID }}
+          FIXED_PAGE_ID: ${{ secrets.FIXED_PAGE_ID }}
         run: node index.js

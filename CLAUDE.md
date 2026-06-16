@@ -138,6 +138,11 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중/트레이너 피드백 요약)
 - 차트 삽입 기준: 기존 `image` 블록(캡션 `📊` 시작) 없으면 `child_database` 직전에 삽입
 
+## Dead code (제거 가능)
+- `findLatestDayPage(monthPageId)` — 이전 구조에서 소스 페이지를 탐색하던 함수. FIXED_PAGE_ID 구조로 전환 후 main()에서 호출되지 않음
+- `findPrevMonthLatestDayPage(year, month)` — 동일 이유로 미사용
+- `findFirstColumnList(pageId)` — 현재 `findPersonalBlocks` 내부에서 직접 처리하므로 미사용
+
 ## 주의사항
 - Gemini는 Default Project 사용 (project-specific quota가 0일 수 있음)
 - `gemini-2.5-flash`는 thinking 모드로 느림 → `flash-lite` 사용

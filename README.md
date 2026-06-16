@@ -86,43 +86,43 @@ The script uses a single **fixed working page** as the source for all daily back
 
 ### Weekday (first run)
 ```
-🌅 Good morning! Have a great day 😊
+🌅 좋은 아침이에요! 오늘도 화이팅입니다 😊
 
-📅 Wednesday, April 29, 2026
-🌤 Partly Cloudy / 14°C / Wind 8 km/h
+📅 2026년 04월 29일 수요일
+🌤 구름 조금 / 기온 14°C / 바람 8km/h
 
-📆 Today's Schedule
-• 14:00–15:00 Team Sprint Review
+📆 오늘 일정
+• 14:00–15:00 팀 스프린트 리뷰
 
-📅 Upcoming Events
-• 4/30 (Thu) 10:00 Design Sync
-• 5/1 (Fri) No events
-• 5/2 (Sat) No events
+📅 다가오는 일정
+• 4/30 (목) 10:00 디자인 싱크
+• 5/1 (금) 일정 없음
+• 5/2 (토) 일정 없음
 
-📋 Today's To-Dos
-• Review proposal
-  • Sub-item
+📋 오늘의 할 일
+• 제안서 검토
+  • 서브 항목
 
-Have a wonderful day! 💪
+오늘 하루도 잘 부탁드려요! 💪
 ```
 
 ### Weekday (duplicate run)
-- Same message + closing line: `Log already existed — sending it again 📋`
+- Same structure, closing line changes to: `이미 백업이 있어서 스냅샷 갱신 후 다시 보내드렸어요~ 📋`
 
 ### Weekend run (no duplicate check)
-- Weather + schedule only (no to-dos) + `Have a restful, recharging day! 🌿`
+- Weather + schedule only (no to-dos) + `푹 쉬고 충전하는 하루 되세요! 🌿`
 - Always sends the same message regardless of duplicates
 
 > ⚠️ GitHub Actions cron runs only on weekdays (Mon–Fri KST). Weekend messages are sent only on manual trigger.
 
 ### On error
 ```
-😥 Oops, something went wrong while creating today's log.
+😥 앗, 오늘 일지 작성 중에 문제가 생겼어요.
 
 📅 {date}
-❌ Error: {err.message}
+❌ 오류 내용: {err.message}
 
-Please check!
+확인 부탁드려요!
 ```
 
 ---

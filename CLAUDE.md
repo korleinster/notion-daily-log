@@ -32,6 +32,7 @@
 
 ## 핵심 파일
 - `index.js` — 메인 로직
+- `sync-worktask.js` — 장기업무 DB 행 동기화 (동일 업무명의 일정코드·카테고리·상태를 일괄 정렬)
 - `.github/workflows/daily-work-log.yml` — GitHub Actions 워크플로우 (KST 05:00, 평일만)
 - `.git/hooks/pre-push` — bash 진입점
 - `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
@@ -137,6 +138,13 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - 워크플로우 `workout-notify.yml`: KST 08:00~23:00 10분마다 실행 (`*/10 0-14,23 * * *` UTC)
 - 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중/트레이너 피드백 요약)
 - 차트 삽입 기준: 기존 `image` 블록(캡션 `📊` 시작) 없으면 `child_database` 직전에 삽입
+
+## sync-worktask.js
+장기업무 DB에서 동일 업무명을 가진 행(담당자별 분리 행)의 `일정코드`, `카테고리`, `상태`가 불일치할 때 일괄 동기화.
+- 가장 최근 수정된 행의 값을 기준으로 나머지 행을 갱신
+- `업무현황`(행별 댓글)은 per-person이므로 동기화 대상 아님
+- 실행: `set -o allexport && source .env && set +o allexport && node sync-worktask.js`
+- 필요 환경변수: `NOTION_TOKEN`, `WORKTASK_DB_ID`
 
 ## Dead code (제거 가능)
 - `findLatestDayPage(monthPageId)` — 이전 구조에서 소스 페이지를 탐색하던 함수. FIXED_PAGE_ID 구조로 전환 후 main()에서 호출되지 않음

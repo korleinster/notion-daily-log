@@ -16,7 +16,8 @@
 - `TELEGRAM_CHAT_ID` — 텔레그램 개인 DM ID (`5515513986`, notionDailyWorkLog 봇과의 개인 대화)
 - `APPLE_ID` — Apple ID 이메일
 - `APPLE_APP_PASSWORD` — Apple 앱 암호
-- `WORKTASK_DB_ID` — 장기업무 Notion DB ID (`9e80cbf822064d7dae69e6fbdbb6134c`)
+- `WORKTASK_DB_ID` — 장기업무 Notion DB ID (마이그레이션 전: `9e80cbf822064d7dae69e6fbdbb6134c` / 마이그레이션 후: Tasks DB ID)
+- `MEMBERS_DB_ID` — Members DB ID (마이그레이션 후 추가, 기존 장기업무 DB: `9e80cbf822064d7dae69e6fbdbb6134c`)
 - `BOARD_PAGE_ID` — 장기업무 보드 페이지 ID (`380e60ccff0c8121a545e0c5f7b9e233`)
 
 ### review.js (pre-push 코드리뷰)
@@ -32,7 +33,8 @@
 
 ## 핵심 파일
 - `index.js` — 메인 로직
-- `sync-worktask.js` — 장기업무 DB 행 동기화 (동일 업무명의 일정코드·카테고리·상태를 일괄 정렬)
+- `sync-worktask.js` — 장기업무 DB 행 동기화 (마이그레이션 전 임시, Relation 전환 후 삭제 예정)
+- `migrate-worktask.js` — 일회성 마이그레이션: 단일 DB → Tasks DB + Members DB (Relation 구조)
 - `.github/workflows/daily-work-log.yml` — GitHub Actions 워크플로우 (KST 05:00, 평일만)
 - `.git/hooks/pre-push` — bash 진입점
 - `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
@@ -139,10 +141,42 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중/트레이너 피드백 요약)
 - 차트 삽입 기준: 기존 `image` 블록(캡션 `📊` 시작) 없으면 `child_database` 직전에 삽입
 
+## Relation 구조 (마이그레이션 후)
+
+장기업무 DB를 Tasks DB + Members DB 두 개로 분리하여 Notion 자체에서 일정코드를 한 곳에서만 관리.
+
+```
+Tasks DB (WORKTASK_DB_ID)          Members DB (MEMBERS_DB_ID)
+├── 업무명 (title)         ◄─── 태스크 (relation)
+├── 일정코드 (rich_text)   Rollup─► 일정코드_rollup
+├── 카테고리 (select)      Rollup─► 카테고리_rollup
+└── 상태 (select)          Rollup─► 상태_rollup
+                                    담당자 (select)
+                                    역할 (multi_select)
+```
+
+### 마이그레이션 실행 (1회성)
+```bash
+# 드라이런 먼저 확인
+set -o allexport && source .env && set +o allexport && node migrate-worktask.js --dry-run
+
+# 실제 실행
+set -o allexport && source .env && set +o allexport && node migrate-worktask.js
+```
+→ 실행 후 출력된 DB ID로 `.env` + GitHub Secrets 업데이트 필요
+
+### 마이그레이션 후 Notion 수동 작업
+1. Members DB에 Rollup 컬럼 추가 (태스크 relation 통해: 일정코드_rollup, 상태_rollup)
+2. 업무단위 칸반 뷰를 Tasks DB로 이동 (GROUP BY 상태)
+3. Members DB에서 업무명/일정코드/카테고리/상태 컬럼 제거 (Rollup으로 대체됨)
+
+### buildSnapshotSection 동작 모드
+- `MEMBERS_DB_ID` 설정 시: 두 DB 모드 (Tasks → Members relation 조회)
+- `MEMBERS_DB_ID` 미설정 시: 단일 DB 레거시 모드 (기존 동작 유지)
+
 ## sync-worktask.js
-장기업무 DB에서 동일 업무명을 가진 행(담당자별 분리 행)의 `일정코드`, `카테고리`, `상태`가 불일치할 때 일괄 동기화.
-- 가장 최근 수정된 행의 값을 기준으로 나머지 행을 갱신
-- `업무현황`(행별 댓글)은 per-person이므로 동기화 대상 아님
+마이그레이션 전 임시 스크립트. Relation 구조 전환 후 삭제 예정.
+- 동일 업무명 행에서 일정코드·카테고리·상태 불일치 시 최근 수정 행 기준으로 일괄 갱신
 - 실행: `set -o allexport && source .env && set +o allexport && node sync-worktask.js`
 - 필요 환경변수: `NOTION_TOKEN`, `WORKTASK_DB_ID`
 

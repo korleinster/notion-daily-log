@@ -16,8 +16,8 @@
 - `TELEGRAM_CHAT_ID` — 텔레그램 개인 DM ID (`5515513986`, notionDailyWorkLog 봇과의 개인 대화)
 - `APPLE_ID` — Apple ID 이메일
 - `APPLE_APP_PASSWORD` — Apple 앱 암호
-- `WORKTASK_DB_ID` — 장기업무 Notion DB ID (마이그레이션 전: `9e80cbf822064d7dae69e6fbdbb6134c` / 마이그레이션 후: Tasks DB ID)
-- `MEMBERS_DB_ID` — Members DB ID (마이그레이션 후 추가, 기존 장기업무 DB: `9e80cbf822064d7dae69e6fbdbb6134c`)
+- `WORKTASK_DB_ID` — Tasks DB ID (`382e60ccff0c81968726e03c3b978099`, "📊 장기업무_태스크")
+- `MEMBERS_DB_ID` — Members DB ID (`9e80cbf822064d7dae69e6fbdbb6134c`, 기존 장기업무 DB)
 - `BOARD_PAGE_ID` — 장기업무 보드 페이지 ID (`380e60ccff0c8121a545e0c5f7b9e233`)
 
 ### review.js (pre-push 코드리뷰)

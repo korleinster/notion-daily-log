@@ -33,8 +33,7 @@
 
 ## 핵심 파일
 - `index.js` — 메인 로직
-- `sync-worktask.js` — 장기업무 DB 행 동기화 (마이그레이션 전 임시, Relation 전환 후 삭제 예정)
-- `migrate-worktask.js` — 일회성 마이그레이션: 단일 DB → Tasks DB + Members DB (Relation 구조)
+- `migrate-worktask.js` — 일회성 마이그레이션 스크립트 (이미 실행 완료, 보관용)
 - `.github/workflows/daily-work-log.yml` — GitHub Actions 워크플로우 (KST 05:00, 평일만)
 - `.git/hooks/pre-push` — bash 진입점
 - `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
@@ -99,14 +98,20 @@
 - `DD=00`은 해당 월의 마지막 날로 처리 (예: `0900` = 9월 말)
 - 오전/오후 반차도 날짜 기준으로만 판단
 
-## 장기업무 DB (`장기업무`)
-- DB ID: `9e80cbf822064d7dae69e6fbdbb6134c`
-- 보드 페이지 ID: `380e60ccff0c8121a545e0c5f7b9e233`
-- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select), `상태`(select), `담당자`(select), `역할`(multi_select)
-- 진행상황은 각 행(페이지)의 **댓글**로 관리 (`업무현황` 속성은 제거됨)
+## 장기업무 DB 구조 (Relation)
+
+### Tasks DB (`📊 장기업무_태스크`)
+- DB ID: `382e60ccff0c81968726e03c3b978099` (`WORKTASK_DB_ID`)
+- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select), `상태`(select)
+- **일정 변경 시 여기서만 수정** → Members DB rollup에 자동 반영
+- 뷰: 업무단위 보드 (GROUP BY 상태, SORT BY 일정코드 ASC)
+
+### Members DB (`장기업무`)
+- DB ID: `9e80cbf822064d7dae69e6fbdbb6134c` (`MEMBERS_DB_ID`)
+- 스키마: `구분`(title), `담당자`(select), `역할`(multi_select), `태스크`(relation→Tasks DB), `일정코드_rollup`(rollup, 읽기전용), `상태_rollup`(rollup, 읽기전용)
 - 담당자 단위 행: 한 업무에 N명이면 N개 행 (칸반 그룹핑 최적화)
-- 뷰: 업무단위 보드(GROUP BY 상태, SORT BY 일정코드 ASC), 담당자별 보드(GROUP BY 담당자, SORT BY 일정코드 ASC)
-- 사용자가 각 행에 댓글로 진행상황 업데이트 → 매일 아침 스냅샷에서 마지막 댓글을 읽어 일지에 기록
+- 진행상황은 각 행의 **댓글**로 관리 → 매일 아침 스냅샷에서 마지막 댓글을 읽어 기록
+- 뷰: 담당자별 보드 (GROUP BY 담당자, SORT BY 일정코드_rollup ASC)
 
 ## Git Pre-push Hook
 push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채팅창에 출력
@@ -174,11 +179,6 @@ set -o allexport && source .env && set +o allexport && node migrate-worktask.js
 - `MEMBERS_DB_ID` 설정 시: 두 DB 모드 (Tasks → Members relation 조회)
 - `MEMBERS_DB_ID` 미설정 시: 단일 DB 레거시 모드 (기존 동작 유지)
 
-## sync-worktask.js
-마이그레이션 전 임시 스크립트. Relation 구조 전환 후 삭제 예정.
-- 동일 업무명 행에서 일정코드·카테고리·상태 불일치 시 최근 수정 행 기준으로 일괄 갱신
-- 실행: `set -o allexport && source .env && set +o allexport && node sync-worktask.js`
-- 필요 환경변수: `NOTION_TOKEN`, `WORKTASK_DB_ID`
 
 ## Dead code (제거 가능)
 - `findLatestDayPage(monthPageId)` — 이전 구조에서 소스 페이지를 탐색하던 함수. FIXED_PAGE_ID 구조로 전환 후 main()에서 호출되지 않음

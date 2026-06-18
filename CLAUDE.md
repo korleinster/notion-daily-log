@@ -16,8 +16,7 @@
 - `TELEGRAM_CHAT_ID` — 텔레그램 개인 DM ID (`5515513986`, notionDailyWorkLog 봇과의 개인 대화)
 - `APPLE_ID` — Apple ID 이메일
 - `APPLE_APP_PASSWORD` — Apple 앱 암호
-- `WORKTASK_DB_ID` — Tasks DB ID (`382e60ccff0c81968726e03c3b978099`, "📊 장기업무_태스크")
-- `MEMBERS_DB_ID` — Members DB ID (`9e80cbf822064d7dae69e6fbdbb6134c`, 기존 장기업무 DB)
+- `WORKTASK_DB_ID` — 장기업무 DB ID (`9e80cbf822064d7dae69e6fbdbb6134c`, "📊 장기업무")
 - `BOARD_PAGE_ID` — 장기업무 보드 페이지 ID (`380e60ccff0c8121a545e0c5f7b9e233`)
 
 ### review.js (pre-push 코드리뷰)
@@ -33,7 +32,6 @@
 
 ## 핵심 파일
 - `index.js` — 메인 로직
-- `migrate-worktask.js` — 일회성 마이그레이션 스크립트 (이미 실행 완료, 보관용)
 - `.github/workflows/daily-work-log.yml` — GitHub Actions 워크플로우 (KST 05:00, 평일만)
 - `.git/hooks/pre-push` — bash 진입점
 - `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
@@ -51,7 +49,10 @@
 │   └── 2026_06
 │       ├── 2026_06_16 (화)  ← 날짜 백업 (고정 페이지 복제본)
 │       └── ...
-└── 📊 장기업무  (영구 DB 페이지)
+└── 📊 장기업무  (영구 DB, WORKTASK_DB_ID)
+    (업무명, 담당자, 역할, 일정코드, 카테고리, 상태)
+    ├── 담당자별 보드  (GROUP BY 담당자)
+    └── 업무단위 보드  (GROUP BY 상태)
 ```
 
 ### 매일 아침 동작
@@ -85,6 +86,7 @@
 
 ### buildSnapshotSection(dayPageId, dbId)
 - `장기업무` DB를 `일정코드` 오름차순으로 전체 조회
+- **자동 동기화**: 동일 `업무명` 그룹 내에서 최근 수정 행을 master로 삼아 `일정코드`·`카테고리`·`상태`가 다른 행을 자동 업데이트 (스냅샷 생성 전 실행) → 일정코드 한 곳만 수정하면 다음 실행 시 자동 동기화됨
 - 각 행에 대해 `notion.comments.list({ block_id: row.id })` 호출 → 마지막 댓글을 업무현황으로 사용
 - `업무명` 기준으로 그룹핑 → 헤더 블록(`[상태] 일정코드 업무명`) append
 - 각 헤더 블록에 담당자 서브 블록(`담당자 (역할): 마지막댓글 or —`) 추가
@@ -98,20 +100,15 @@
 - `DD=00`은 해당 월의 마지막 날로 처리 (예: `0900` = 9월 말)
 - 오전/오후 반차도 날짜 기준으로만 판단
 
-## 장기업무 DB 구조 (Relation)
+## 장기업무 DB 구조 (단일 DB)
 
-### Tasks DB (`📊 장기업무_태스크`)
-- DB ID: `382e60ccff0c81968726e03c3b978099` (`WORKTASK_DB_ID`)
-- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select), `상태`(select)
-- **일정 변경 시 여기서만 수정** → Members DB rollup에 자동 반영
-- 뷰: 업무단위 보드 (GROUP BY 상태, SORT BY 일정코드 ASC)
-
-### Members DB (`장기업무`)
-- DB ID: `9e80cbf822064d7dae69e6fbdbb6134c` (`MEMBERS_DB_ID`)
-- 스키마: `구분`(title), `담당자`(select), `역할`(multi_select), `태스크`(relation→Tasks DB), `일정코드_rollup`(rollup, 읽기전용), `상태_rollup`(rollup, 읽기전용)
+### 장기업무 DB (`📊 장기업무`)
+- DB ID: `9e80cbf822064d7dae69e6fbdbb6134c` (`WORKTASK_DB_ID`)
+- 스키마: `업무명`(title), `담당자`(select), `역할`(multi_select), `일정코드`(rich_text), `카테고리`(select), `상태`(select)
 - 담당자 단위 행: 한 업무에 N명이면 N개 행 (칸반 그룹핑 최적화)
+- **일정코드 변경**: 임의의 한 행만 수정 → 다음 `node index.js` 실행 시 동일 `업무명` 그룹 전체에 자동 동기화
 - 진행상황은 각 행의 **댓글**로 관리 → 매일 아침 스냅샷에서 마지막 댓글을 읽어 기록
-- 뷰: 담당자별 보드 (GROUP BY 담당자, SORT BY 일정코드_rollup ASC)
+- 뷰: 담당자별 보드 (GROUP BY 담당자), 업무단위 보드 (GROUP BY 상태)
 
 ## Git Pre-push Hook
 push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채팅창에 출력
@@ -145,39 +142,6 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - 워크플로우 `workout-notify.yml`: KST 08:00~23:00 10분마다 실행 (`*/10 0-14,23 * * *` UTC)
 - 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중/트레이너 피드백 요약)
 - 차트 삽입 기준: 기존 `image` 블록(캡션 `📊` 시작) 없으면 `child_database` 직전에 삽입
-
-## Relation 구조 (마이그레이션 후)
-
-장기업무 DB를 Tasks DB + Members DB 두 개로 분리하여 Notion 자체에서 일정코드를 한 곳에서만 관리.
-
-```
-Tasks DB (WORKTASK_DB_ID)          Members DB (MEMBERS_DB_ID)
-├── 업무명 (title)         ◄─── 태스크 (relation)
-├── 일정코드 (rich_text)   Rollup─► 일정코드_rollup
-├── 카테고리 (select)      Rollup─► 카테고리_rollup
-└── 상태 (select)          Rollup─► 상태_rollup
-                                    담당자 (select)
-                                    역할 (multi_select)
-```
-
-### 마이그레이션 실행 (1회성)
-```bash
-# 드라이런 먼저 확인
-set -o allexport && source .env && set +o allexport && node migrate-worktask.js --dry-run
-
-# 실제 실행
-set -o allexport && source .env && set +o allexport && node migrate-worktask.js
-```
-→ 실행 후 출력된 DB ID로 `.env` + GitHub Secrets 업데이트 필요
-
-### 마이그레이션 후 Notion 수동 작업
-1. Members DB에 Rollup 컬럼 추가 (태스크 relation 통해: 일정코드_rollup, 상태_rollup)
-2. 업무단위 칸반 뷰를 Tasks DB로 이동 (GROUP BY 상태)
-3. Members DB에서 업무명/일정코드/카테고리/상태 컬럼 제거 (Rollup으로 대체됨)
-
-### buildSnapshotSection 동작 모드
-- `MEMBERS_DB_ID` 설정 시: 두 DB 모드 (Tasks → Members relation 조회)
-- `MEMBERS_DB_ID` 미설정 시: 단일 DB 레거시 모드 (기존 동작 유지)
 
 
 ## Dead code (제거 가능)

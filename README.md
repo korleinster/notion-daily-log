@@ -49,13 +49,10 @@ Daily Work Log (ROOT_PAGE_ID)
 │   └── 2026_06
 │       └── 2026_06_16 (Tue)  ← dated backup (cloned from fixed page)
 │
-├── 📊 장기업무_태스크       ← Tasks DB (WORKTASK_DB_ID) — one row per task
-│   (업무명, 일정코드, 카테고리, 상태)
-│   └── 업무단위 보드  (GROUP BY 상태)
-│
-└── 📊 장기업무              ← Members DB (MEMBERS_DB_ID) — one row per person per task
-    (구분, 담당자, 역할, 태스크→relation, 일정코드_rollup, 상태_rollup)
-    └── 담당자별 보드  (GROUP BY 담당자)
+└── 📊 장기업무              ← Long-term task DB (WORKTASK_DB_ID) — one row per person per task
+    (업무명, 담당자, 역할, 일정코드, 카테고리, 상태)
+    ├── 담당자별 보드  (GROUP BY 담당자)
+    └── 업무단위 보드  (GROUP BY 상태)
 ```
 
 - User always works on the fixed page — no need to navigate to a new page each day
@@ -76,23 +73,16 @@ The script uses a single **fixed working page** as the source for all daily back
 
 ### Long-term Task DB setup (one-time)
 
-Two databases are required — a **Tasks DB** (one row per task) and a **Members DB** (one row per person per task).
+A single database (`📊 장기업무`) with one row per person per task is required.
 
-**Tasks DB (`📊 장기업무_태스크`)**
-1. Create a database with schema: `업무명` (title), `일정코드` (text), `카테고리` (select), `상태` (select)
-2. Add a board view grouped by `상태`, sorted by `일정코드` ASC
-3. Set `WORKTASK_DB_ID` to this DB's ID
+1. Create a database with schema: `업무명` (title), `담당자` (select), `역할` (multi-select), `일정코드` (text), `카테고리` (select), `상태` (select)
+2. Add two board views: grouped by `담당자` and grouped by `상태`, both sorted by `일정코드` ASC
+3. Progress updates are tracked via **row-level comments** (read last comment per row as status)
+4. Set `WORKTASK_DB_ID` to this DB's ID
+5. Add `WORKTASK_DB_ID` and `BOARD_PAGE_ID` to GitHub Secrets and local `.env`
+6. Enable **Read comments** and **Insert comments** capabilities on the Notion integration (notion.so/my-integrations → Capabilities)
 
-**Members DB (`📊 장기업무`)**
-1. Create a database with schema: `구분` (title), `담당자` (select), `역할` (multi-select), `태스크` (relation → Tasks DB)
-2. Add rollup columns: `일정코드_rollup` and `상태_rollup` from the `태스크` relation
-3. Add a board view grouped by `담당자`, sorted by `일정코드_rollup` ASC
-4. Progress updates are tracked via **row-level comments** (read last comment per row as status)
-5. Set `MEMBERS_DB_ID` to this DB's ID
-
-**Common**
-- Add `WORKTASK_DB_ID`, `MEMBERS_DB_ID`, and `BOARD_PAGE_ID` to GitHub Secrets and local `.env`
-- Enable **Read comments** and **Insert comments** capabilities on the Notion integration (notion.so/my-integrations → Capabilities)
+> **일정코드 변경**: 한 행만 수정하면 다음 실행 시 동일 `업무명` 그룹 전체가 자동 동기화됩니다.
 
 ---
 
@@ -153,8 +143,7 @@ Two databases are required — a **Tasks DB** (one row per task) and a **Members
 | `TELEGRAM_CHAT_ID` | Telegram personal DM ID |
 | `APPLE_ID` | Apple ID email (for iCloud Calendar; skipped if missing) |
 | `APPLE_APP_PASSWORD` | Apple app-specific password (for iCloud Calendar; skipped if missing) |
-| `WORKTASK_DB_ID` | Tasks DB ID (`📊 장기업무_태스크`) — one row per task, source of truth for 일정코드/상태 |
-| `MEMBERS_DB_ID` | Members DB ID (`📊 장기업무`) — one row per person per task, holds progress comments |
+| `WORKTASK_DB_ID` | Long-term task DB ID (`📊 장기업무`) — one row per person per task |
 | `BOARD_PAGE_ID` | Long-term task board page ID (linked at the bottom of the fixed page) |
 | `FIXED_PAGE_ID` | Fixed working page ID (`📌 오늘의 업무`) — the page the user always works from |
 

@@ -8,6 +8,7 @@ const ROOT_PAGE_ID = process.env.DAILY_LOG_PAGE_ID;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const WORKTASK_DB_ID = process.env.WORKTASK_DB_ID;
+const MEMBERS_DB_ID  = process.env.MEMBERS_DB_ID;
 const BOARD_PAGE_ID = process.env.BOARD_PAGE_ID;
 const FIXED_PAGE_ID = process.env.FIXED_PAGE_ID;
 
@@ -481,98 +482,87 @@ async function findPersonalBlocks(sourcePageId) {
 }
 
 // ──────────────────────────────────────────────
-// 장기업무 DB 스냅샷 섹션 생성
-// 동일 업무명 행의 일정코드·카테고리·상태 불일치를 스냅샷 생성 전에 자동 동기화
+// 장기업무 스냅샷 섹션 생성 (Tasks DB + Members DB 두 DB 구조)
+// Tasks DB: 업무 1개 = 행 1개 (업무명, 일정코드, 카테고리, 상태)
+// Members DB: 담당자 1명 = 행 1개 (담당자, 업무 relation, 역할, 업무현황 per 댓글)
 // ──────────────────────────────────────────────
-async function buildSnapshotSection(dayPageId, dbId) {
+async function buildSnapshotSection(dayPageId, tasksDbId, membersDbId) {
   await withRetry(() => notion.blocks.children.append({
     block_id: dayPageId,
     children: [{ object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '📋 오늘의 장기업무 현황' } }] } }],
   }));
 
-  if (!dbId) return;
+  if (!tasksDbId) return;
 
   const propText = prop =>
     prop?.rich_text?.map(t => t.plain_text).join('') ||
     prop?.title?.map(t => t.plain_text).join('') || '';
 
-  // DB 전체 조회 (일정코드 오름차순)
-  const rows = [];
+  // 1. Tasks DB 전체 조회 (일정코드 오름차순)
+  const taskRows = [];
   let cursor;
   while (true) {
     const res = await withRetry(() => notion.databases.query({
-      database_id: dbId,
+      database_id: tasksDbId,
       sorts: [{ property: '일정코드', direction: 'ascending' }],
       page_size: 100,
       ...(cursor ? { start_cursor: cursor } : {}),
     }));
-    rows.push(...res.results);
+    taskRows.push(...res.results);
     if (!res.has_more) break;
     cursor = res.next_cursor;
   }
 
-  // 동일 업무명 행들의 일정코드·카테고리·상태 자동 동기화 (최근 수정 행 기준)
-  const syncGroups = new Map();
-  for (const row of rows) {
-    const 업무명 = propText(row.properties['업무명']);
-    if (!업무명) continue;
-    if (!syncGroups.has(업무명)) syncGroups.set(업무명, []);
-    syncGroups.get(업무명).push(row);
-  }
-  for (const groupRows of syncGroups.values()) {
-    if (groupRows.length <= 1) continue;
-    const master = [...groupRows].sort((a, b) =>
-      new Date(b.last_edited_time) - new Date(a.last_edited_time))[0];
-    const mp = master.properties;
-    const m일정코드 = propText(mp['일정코드']);
-    const m카테고리 = mp['카테고리']?.select?.name || '';
-    const m상태    = mp['상태']?.select?.name || '';
-    for (const row of groupRows) {
-      if (row.id === master.id) continue;
-      const p = row.properties;
-      if (propText(p['일정코드']) === m일정코드 &&
-          (p['카테고리']?.select?.name || '') === m카테고리 &&
-          (p['상태']?.select?.name || '') === m상태) continue;
-      await withRetry(() => notion.pages.update({
-        page_id: row.id,
-        properties: {
-          '일정코드': { rich_text: m일정코드 ? [{ type: 'text', text: { content: m일정코드 } }] : [] },
-          '카테고리': { select: m카테고리 ? { name: m카테고리 } : null },
-          '상태':    { select: m상태    ? { name: m상태    } : null },
-        },
+  // 2. Members DB 전체 조회 (membersDbId 없으면 스킵)
+  const memberRows = [];
+  if (membersDbId) {
+    cursor = undefined;
+    while (true) {
+      const res = await withRetry(() => notion.databases.query({
+        database_id: membersDbId,
+        page_size: 100,
+        ...(cursor ? { start_cursor: cursor } : {}),
       }));
-      row.properties['일정코드'] = master.properties['일정코드'];
-      row.properties['카테고리'] = master.properties['카테고리'];
-      row.properties['상태']    = master.properties['상태'];
+      memberRows.push(...res.results);
+      if (!res.has_more) break;
+      cursor = res.next_cursor;
     }
   }
 
-  // 각 행의 마지막 댓글 수집 (업무현황 per person)
+  // 3. Members 행 댓글 수집 (per-person 업무현황)
   const commentMap = {};
-  for (const row of rows) {
+  for (const row of memberRows) {
     const res = await withRetry(() => notion.comments.list({ block_id: row.id, page_size: 100 }));
     const last = res.results[res.results.length - 1];
     commentMap[row.id] = last?.rich_text?.map(t => t.plain_text).join('') || '';
   }
 
-  // 업무명 기준 그룹핑 (일정코드 정렬 유지)
-  const groups = new Map();
-  for (const row of rows) {
-    const p = row.properties;
-    const 업무명  = propText(p['업무명']);
-    const 일정코드 = propText(p['일정코드']);
-    const 상태   = p['상태']?.select?.name || '';
-    const 담당자  = p['담당자']?.select?.name || '';
-    const 역할   = (p['역할']?.multi_select || []).map(r => r.name).join('/');
-    const key = `${일정코드}|||${업무명}`;
-    if (!groups.has(key)) groups.set(key, { 업무명, 일정코드, 상태, members: [] });
-    if (담당자) groups.get(key).members.push({ 담당자, 역할, 업무현황: commentMap[row.id] || '' });
+  // 4. Tasks 기준 groups 구성 (id → 업무 정보 + members 배열)
+  const groupByTaskId = new Map();
+  for (const taskRow of taskRows) {
+    const p = taskRow.properties;
+    groupByTaskId.set(taskRow.id, {
+      업무명:  propText(p['업무명']),
+      일정코드: propText(p['일정코드']),
+      상태:   p['상태']?.select?.name || '',
+      members: [],
+    });
   }
 
-  const groupList = [...groups.values()];
+  // 5. Members → 업무 relation으로 groups에 연결
+  for (const memberRow of memberRows) {
+    const taskId = memberRow.properties['업무']?.relation?.[0]?.id;
+    if (!taskId || !groupByTaskId.has(taskId)) continue;
+    const p = memberRow.properties;
+    const 담당자 = propText(p['담당자']);
+    const 역할  = (p['역할']?.multi_select || []).map(r => r.name).join('/');
+    if (담당자) groupByTaskId.get(taskId).members.push({ 담당자, 역할, 업무현황: commentMap[memberRow.id] || '' });
+  }
+
+  const groupList = [...groupByTaskId.values()].filter(g => g.업무명);
   if (groupList.length === 0) return;
 
-  // 헤더 블록 append
+  // 6. 헤더 블록 + 담당자 서브블록 append
   const headerBlocks = groupList.map(({ 업무명, 일정코드, 상태 }) => ({
     object: 'block', type: 'bulleted_list_item',
     bulleted_list_item: { rich_text: [{ type: 'text', text: { content: `[${상태 || '—'}] ${일정코드 ? 일정코드 + ' ' : ''}${업무명}` } }] },
@@ -672,7 +662,7 @@ async function refreshSnapshotInPage(fixedPageId) {
     block_id: fixedPageId,
     children: [{ object: 'block', type: 'divider', divider: {} }],
   }));
-  await buildSnapshotSection(fixedPageId, WORKTASK_DB_ID);
+  await buildSnapshotSection(fixedPageId, WORKTASK_DB_ID, MEMBERS_DB_ID);
   if (BOARD_PAGE_ID) {
     await withRetry(() => notion.blocks.children.append({
       block_id: fixedPageId,
@@ -752,7 +742,7 @@ ${weather}${calendarText}${itemsText}
       block_id: backupPageId,
       children: [{ object: 'block', type: 'divider', divider: {} }],
     }));
-    await buildSnapshotSection(backupPageId, WORKTASK_DB_ID);
+    await buildSnapshotSection(backupPageId, WORKTASK_DB_ID, MEMBERS_DB_ID);
     if (BOARD_PAGE_ID) {
       await withRetry(() => notion.blocks.children.append({
         block_id: backupPageId,

@@ -16,7 +16,8 @@
 - `TELEGRAM_CHAT_ID` — 텔레그램 개인 DM ID (`5515513986`, notionDailyWorkLog 봇과의 개인 대화)
 - `APPLE_ID` — Apple ID 이메일
 - `APPLE_APP_PASSWORD` — Apple 앱 암호
-- `WORKTASK_DB_ID` — 장기업무 DB ID (`9e80cbf822064d7dae69e6fbdbb6134c`, "📊 장기업무")
+- `WORKTASK_DB_ID` — Tasks DB ID (`9e80cbf822064d7dae69e6fbdbb6134c`, "📊 장기업무") — 업무 1개 = 행 1개
+- `MEMBERS_DB_ID` — Members DB ID ("📊 장기업무_담당자") — 담당자 1명 = 행 1개, 독립 댓글
 - `BOARD_PAGE_ID` — 장기업무 보드 페이지 ID (`380e60ccff0c8121a545e0c5f7b9e233`)
 
 ### review.js (pre-push 코드리뷰)
@@ -49,10 +50,13 @@
 │   └── 2026_06
 │       ├── 2026_06_16 (화)  ← 날짜 백업 (고정 페이지 복제본)
 │       └── ...
-└── 📊 장기업무  (영구 DB, WORKTASK_DB_ID)
-    (업무명, 담당자, 역할, 일정코드, 카테고리, 상태)
-    ├── 담당자별 보드  (GROUP BY 담당자)
-    └── 업무단위 보드  (GROUP BY 상태)
+├── 📊 장기업무  (Tasks DB, WORKTASK_DB_ID) — 업무 1개 = 행 1개
+│   (업무명, 일정코드, 카테고리, 상태)
+│   └── 업무단위 보드  (GROUP BY 상태, SORT BY 일정코드 ASC)
+│
+└── 📊 장기업무_담당자  (Members DB, MEMBERS_DB_ID) — 담당자 1명 = 행 1개
+    (담당자, 업무→relation, 역할, 일정코드_rollup, 상태_rollup)
+    └── 담당자별 보드  (GROUP BY 담당자)
 ```
 
 ### 매일 아침 동작
@@ -84,13 +88,14 @@
 - 신 레이아웃(flat): divider / link_to_page / `📋`로 시작하는 헤딩 이전까지의 블록 반환
 - 두 레이아웃 모두 지원하므로 이전 일지에서도 정상 복사 가능
 
-### buildSnapshotSection(dayPageId, dbId)
-- `장기업무` DB를 `일정코드` 오름차순으로 전체 조회
-- **자동 동기화**: 동일 `업무명` 그룹 내에서 최근 수정 행을 master로 삼아 `일정코드`·`카테고리`·`상태`가 다른 행을 자동 업데이트 (스냅샷 생성 전 실행) → 일정코드 한 곳만 수정하면 다음 실행 시 자동 동기화됨
-- 각 행에 대해 `notion.comments.list({ block_id: row.id })` 호출 → 마지막 댓글을 업무현황으로 사용
-- `업무명` 기준으로 그룹핑 → 헤더 블록(`[상태] 일정코드 업무명`) append
-- 각 헤더 블록에 담당자 서브 블록(`담당자 (역할): 마지막댓글 or —`) 추가
-- `WORKTASK_DB_ID` 없으면 heading만 append하고 조기 반환
+### buildSnapshotSection(dayPageId, tasksDbId, membersDbId)
+- Tasks DB를 `일정코드` 오름차순으로 전체 조회 (업무 1개 = 행 1개)
+- Members DB 전체 조회 (담당자 1명 = 행 1개, `업무` relation으로 Tasks와 연결)
+- Members 행마다 `notion.comments.list({ block_id: row.id })` 호출 → 마지막 댓글을 per-person 업무현황으로 사용
+- Tasks 기준 그룹 구성 → Members의 `업무` relation으로 담당자 연결
+- 헤더 블록(`[상태] 일정코드 업무명`) append 후, 각 헤더에 담당자 서브 블록 추가
+- `tasksDbId` 없으면 heading만 append하고 조기 반환
+- `membersDbId` 없으면 담당자 없이 업무 목록만 표시 (graceful degradation)
 - 댓글 API 사용: Notion 인테그레이션에 **Read comments + Insert comments** 권한 필요
 
 ## 연차 자동 처리
@@ -100,15 +105,28 @@
 - `DD=00`은 해당 월의 마지막 날로 처리 (예: `0900` = 9월 말)
 - 오전/오후 반차도 날짜 기준으로만 판단
 
-## 장기업무 DB 구조 (단일 DB)
+## 장기업무 DB 구조 (두 DB)
 
-### 장기업무 DB (`📊 장기업무`)
+### Tasks DB (`📊 장기업무`)
 - DB ID: `9e80cbf822064d7dae69e6fbdbb6134c` (`WORKTASK_DB_ID`)
-- 스키마: `업무명`(title), `담당자`(select), `역할`(multi_select), `일정코드`(rich_text), `카테고리`(select), `상태`(select)
-- 담당자 단위 행: 한 업무에 N명이면 N개 행 (칸반 그룹핑 최적화)
-- **일정코드 변경**: 임의의 한 행만 수정 → 다음 `node index.js` 실행 시 동일 `업무명` 그룹 전체에 자동 동기화
+- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select), `상태`(select)
+- **업무 1개 = 행 1개** (기본 뷰에서 중복 없음)
+- **일정코드/상태 변경 → 여기서만** → Members DB rollup 자동 반영
+- 뷰: 업무단위 보드 (GROUP BY 상태, SORT BY 일정코드 ASC)
+
+### Members DB (`📊 장기업무_담당자`)
+- DB ID: `MEMBERS_DB_ID` (migrate-v2.js 실행 후 확인)
+- 스키마: `담당자`(title), `업무`(relation→Tasks DB), `역할`(multi_select), `일정코드_rollup`(rollup 읽기전용), `상태_rollup`(rollup 읽기전용)
+- **담당자 1명 = 행 1개** (한 업무에 N명이면 N개 행)
 - 진행상황은 각 행의 **댓글**로 관리 → 매일 아침 스냅샷에서 마지막 댓글을 읽어 기록
-- 뷰: 담당자별 보드 (GROUP BY 담당자), 업무단위 보드 (GROUP BY 상태)
+- 뷰: 담당자별 보드 (GROUP BY 담당자, SORT BY 일정코드_rollup ASC)
+
+### 편집 규칙
+| 작업 | 위치 |
+|------|------|
+| 일정코드/카테고리/상태 변경 | Tasks DB (`장기업무`) |
+| 업무현황 업데이트 | Members DB (`장기업무_담당자`) 각자 행에 댓글 |
+| 새 업무 추가 | Tasks DB에 행 추가 → Members DB에서 담당자 배정 |
 
 ## Git Pre-push Hook
 push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채팅창에 출력

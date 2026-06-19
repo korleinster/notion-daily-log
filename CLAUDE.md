@@ -17,7 +17,7 @@
 - `APPLE_ID` — Apple ID 이메일
 - `APPLE_APP_PASSWORD` — Apple 앱 암호
 - `WORKTASK_DB_ID` — Tasks DB ID (`9e80cbf822064d7dae69e6fbdbb6134c`, "📊 장기업무") — 업무 1개 = 행 1개
-- `MEMBERS_DB_ID` — Members DB ID ("📊 장기업무_담당자") — 담당자 1명 = 행 1개, 독립 댓글
+- `MEMBERS_DB_ID` — Members DB ID (`384e60ccff0c8189811de0b01b9b2825`, "📊 장기업무_담당자") — 담당자 1명 = 행 1개, 독립 댓글
 - `BOARD_PAGE_ID` — 장기업무 보드 페이지 ID (`380e60ccff0c8121a545e0c5f7b9e233`)
 
 ### review.js (pre-push 코드리뷰)
@@ -115,7 +115,7 @@
 - 뷰: 업무단위 보드 (GROUP BY 상태, SORT BY 일정코드 ASC)
 
 ### Members DB (`📊 장기업무_담당자`)
-- DB ID: `MEMBERS_DB_ID` (migrate-v2.js 실행 후 확인)
+- DB ID: `384e60ccff0c8189811de0b01b9b2825` (`MEMBERS_DB_ID`)
 - 스키마: `담당자`(title), `업무`(relation→Tasks DB), `역할`(multi_select), `일정코드_rollup`(rollup 읽기전용), `상태_rollup`(rollup 읽기전용)
 - **담당자 1명 = 행 1개** (한 업무에 N명이면 N개 행)
 - 진행상황은 각 행의 **댓글**로 관리 → 매일 아침 스냅샷에서 마지막 댓글을 읽어 기록

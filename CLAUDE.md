@@ -46,17 +46,23 @@
 │     ├── ---
 │     ├── 📋 오늘의 장기업무 현황  (매일 아침 자동 갱신)
 │     └── 🔗 장기업무 보드 →
+│
 ├── 2026년
 │   └── 2026_06
 │       ├── 2026_06_16 (화)  ← 날짜 백업 (고정 페이지 복제본)
 │       └── ...
-├── 📊 장기업무  (Tasks DB, WORKTASK_DB_ID) — 업무 1개 = 행 1개
-│   (업무명, 일정코드, 카테고리, 상태)
-│   └── 업무단위 보드  (GROUP BY 상태, SORT BY 일정코드 ASC)
+│
+├── 📊 장기업무_보드  (Tasks DB, WORKTASK_DB_ID) — 업무 1개 = 행 1개
+│   (업무명, 일정코드, 카테고리, 상태, 날짜, 담당자/person, 위치)
+│   ├── Default view: 테이블
+│   ├── 업무단위 보드  (GROUP BY 카테고리)
+│   └── 담당자별 보드  (GROUP BY 상태, SORT BY 일정코드 ASC)
 │
 └── 📊 장기업무_담당자  (Members DB, MEMBERS_DB_ID) — 담당자 1명 = 행 1개
-    (담당자, 업무→relation, 역할, 일정코드_rollup, 상태_rollup)
-    └── 담당자별 보드  (GROUP BY 담당자)
+    (담당자/title, 업무→relation, 역할/multi_select, 일정/text, 상태_rollup)
+    ├── Default view: 테이블
+    ├── 담당자별 뷰  (GROUP BY 담당자, SORT BY 일정 ASC)
+    └── 차트 뷰  (GROUP BY 역할)
 ```
 
 ### 매일 아침 동작
@@ -107,25 +113,26 @@
 
 ## 장기업무 DB 구조 (두 DB)
 
-### Tasks DB (`📊 장기업무`)
+### Tasks DB (`📊 장기업무_보드`)
 - DB ID: `9e80cbf822064d7dae69e6fbdbb6134c` (`WORKTASK_DB_ID`)
-- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select), `상태`(select)
+- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select: 마일스톤/백로그/업무환경개선), `상태`(select: 진행중/대기중), `날짜`(date), `담당자`(person), `위치`(place)
 - **업무 1개 = 행 1개** (기본 뷰에서 중복 없음)
-- **일정코드/상태 변경 → 여기서만** → Members DB rollup 자동 반영
-- 뷰: 업무단위 보드 (GROUP BY 상태, SORT BY 일정코드 ASC)
+- **일정코드/상태/카테고리 변경 → 여기서만**
+- 뷰: 업무단위 보드 (GROUP BY 카테고리), 담당자별 보드 (GROUP BY 상태, SORT BY 일정코드 ASC)
 
 ### Members DB (`📊 장기업무_담당자`)
 - DB ID: `384e60ccff0c8189811de0b01b9b2825` (`MEMBERS_DB_ID`)
-- 스키마: `담당자`(title), `업무`(relation→Tasks DB), `역할`(multi_select), `일정코드_rollup`(rollup 읽기전용), `상태_rollup`(rollup 읽기전용)
+- 스키마: `담당자`(title), `업무`(relation→Tasks DB), `역할`(multi_select: 보스/이끌이/레벨/시스템/몬스터/네러티브/기믹), `일정`(text — 담당자별 일정 메모), `상태_rollup`(rollup, 읽기전용)
 - **담당자 1명 = 행 1개** (한 업무에 N명이면 N개 행)
 - 진행상황은 각 행의 **댓글**로 관리 → 매일 아침 스냅샷에서 마지막 댓글을 읽어 기록
-- 뷰: 담당자별 보드 (GROUP BY 담당자, SORT BY 일정코드_rollup ASC)
+- 뷰: 담당자별 뷰 (GROUP BY 담당자, SORT BY 일정 ASC), 차트 (GROUP BY 역할)
 
 ### 편집 규칙
 | 작업 | 위치 |
 |------|------|
-| 일정코드/카테고리/상태 변경 | Tasks DB (`장기업무`) |
-| 업무현황 업데이트 | Members DB (`장기업무_담당자`) 각자 행에 댓글 |
+| 일정코드/카테고리/상태 변경 | Tasks DB (`장기업무_보드`) |
+| 담당자별 일정 메모 | Members DB (`장기업무_담당자`) `일정` 필드 |
+| 업무현황 업데이트 | Members DB 각자 행에 댓글 |
 | 새 업무 추가 | Tasks DB에 행 추가 → Members DB에서 담당자 배정 |
 
 ## Git Pre-push Hook

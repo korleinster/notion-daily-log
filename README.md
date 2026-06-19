@@ -49,13 +49,15 @@ Daily Work Log (ROOT_PAGE_ID)
 │   └── 2026_06
 │       └── 2026_06_16 (Tue)  ← dated backup (cloned from fixed page)
 │
-├── 📊 장기업무              ← Tasks DB (WORKTASK_DB_ID) — one row per TASK
-│   (업무명, 일정코드, 카테고리, 상태)
-│   └── 업무단위 보드  (GROUP BY 상태, SORT BY 일정코드 ASC)
+├── 📊 장기업무_보드         ← Tasks DB (WORKTASK_DB_ID) — one row per TASK
+│   (업무명, 일정코드, 카테고리, 상태, 날짜, 담당자/person, 위치)
+│   ├── 업무단위 보드  (GROUP BY 카테고리)
+│   └── 담당자별 보드  (GROUP BY 상태, SORT BY 일정코드 ASC)
 │
 └── 📊 장기업무_담당자       ← Members DB (MEMBERS_DB_ID) — one row per PERSON per task
-    (담당자, 업무→relation, 역할, 일정코드_rollup, 상태_rollup)
-    └── 담당자별 보드  (GROUP BY 담당자)
+    (담당자/title, 업무→relation, 역할, 일정/text, 상태_rollup)
+    ├── 담당자별 뷰  (GROUP BY 담당자, SORT BY 일정 ASC)
+    └── 차트 뷰  (GROUP BY 역할)
 ```
 
 - User always works on the fixed page — no need to navigate to a new page each day

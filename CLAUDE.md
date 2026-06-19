@@ -94,14 +94,14 @@
 - 신 레이아웃(flat): divider / link_to_page / `📋`로 시작하는 헤딩 이전까지의 블록 반환
 - 두 레이아웃 모두 지원하므로 이전 일지에서도 정상 복사 가능
 
-### buildSnapshotSection(dayPageId, tasksDbId, membersDbId)
-- Tasks DB를 `일정코드` 오름차순으로 전체 조회 (업무 1개 = 행 1개)
-- Members DB 전체 조회 (담당자 1명 = 행 1개, `업무` relation으로 Tasks와 연결)
+### buildSnapshotSection(dayPageId, membersDbId)
+- **Tasks DB 직접 쿼리 없음** — `databases.query`로 Tasks DB 접근 불가 상태(object_not_found)
+- Members DB 전체 조회 (담당자 1명 = 행 1개)
+- Members 행의 `업무` relation에서 task 페이지 ID 수집 → `notion.pages.retrieve({ page_id })` 병렬 조회
 - Members 행마다 `notion.comments.list({ block_id: row.id })` 호출 → 마지막 댓글을 per-person 업무현황으로 사용
-- Tasks 기준 그룹 구성 → Members의 `업무` relation으로 담당자 연결
+- task 기준 그룹 구성 → Members의 `업무` relation으로 담당자 연결
 - 헤더 블록(`[상태] 일정코드 업무명`) append 후, 각 헤더에 담당자 서브 블록 추가
-- `tasksDbId` 없으면 heading만 append하고 조기 반환
-- `membersDbId` 없으면 담당자 없이 업무 목록만 표시 (graceful degradation)
+- `membersDbId` 없으면 heading만 append하고 조기 반환
 - 댓글 API 사용: Notion 인테그레이션에 **Read comments + Insert comments** 권한 필요
 
 ## 연차 자동 처리

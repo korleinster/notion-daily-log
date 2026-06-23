@@ -95,12 +95,12 @@
 - 두 레이아웃 모두 지원하므로 이전 일지에서도 정상 복사 가능
 
 ### buildSnapshotSection(dayPageId, membersDbId)
-- **Tasks DB 직접 쿼리 없음** — `databases.query`로 Tasks DB 접근 불가 상태(object_not_found)
-- Members DB 전체 조회 (담당자 1명 = 행 1개)
-- Members 행의 `업무` relation에서 task 페이지 ID 수집 → `notion.pages.retrieve({ page_id })` 병렬 조회
-- Members 행마다 `notion.comments.list({ block_id: row.id })` 호출 → 마지막 댓글을 per-person 업무현황으로 사용
-- task 기준 그룹 구성 → Members의 `업무` relation으로 담당자 연결
-- 헤더 블록(`[상태] 일정코드 업무명`) append 후, 각 헤더에 담당자 서브 블록 추가
+- Members DB(`장기업무_담당자`) 전체 조회 — `담당자`(title), `업무명`(text), `일정`(text), `역할`(multi_select)
+- Tasks DB 사용 안 함 (삭제 상태)
+- 각 담당자 행마다 `notion.comments.list({ block_id: row.id })` → 마지막 댓글을 업무현황으로 사용
+- `일정 + 업무명` 복합 키로 그룹핑 → 같은 업무의 담당자들을 묶음
+- 일정 오름차순 정렬
+- 헤더 블록(`일정 업무명`) append 후 각 헤더에 담당자 서브 블록(`담당자 (역할): 업무현황`) 추가
 - `membersDbId` 없으면 heading만 append하고 조기 반환
 - 댓글 API 사용: Notion 인테그레이션에 **Read comments + Insert comments** 권한 필요
 
@@ -113,27 +113,19 @@
 
 ## 장기업무 DB 구조 (두 DB)
 
-### Tasks DB (`📊 장기업무_태스크`)
-- DB ID: `382e60ccff0c81968726e03c3b978099` (`WORKTASK_DB_ID`)
-- 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select: 마일스톤/백로그/업무환경개선), `상태`(select: 진행중/대기중), `날짜`(date), `담당자`(person), `위치`(place)
-- **업무 1개 = 행 1개** (기본 뷰에서 중복 없음)
-- **일정코드/상태/카테고리 변경 → 여기서만**
-- 뷰: 업무단위 보드 (GROUP BY 카테고리), 담당자별 보드 (GROUP BY 상태, SORT BY 일정코드 ASC)
-
-### Members DB (`📊 장기업무_담당자`)
+### Members DB (`📊 장기업무_담당자`) — 유일한 DB
 - DB ID: `384e60ccff0c8189811de0b01b9b2825` (`MEMBERS_DB_ID`)
-- 스키마: `담당자`(title), `업무`(relation→Tasks DB), `역할`(multi_select: 보스/이끌이/레벨/시스템/몬스터/네러티브/기믹), `일정`(text — 담당자별 일정 메모), `상태_rollup`(rollup, 읽기전용)
+- 스키마: `담당자`(title), `업무명`(text), `역할`(multi_select: 보스/이끌이/레벨/시스템/몬스터/네러티브/기믹), `일정`(text)
 - **담당자 1명 = 행 1개** (한 업무에 N명이면 N개 행)
 - 진행상황은 각 행의 **댓글**로 관리 → 매일 아침 스냅샷에서 마지막 댓글을 읽어 기록
+- Tasks DB(`장기업무_태스크`) 삭제됨 — 스크립트에서 사용 안 함
 - 뷰: 담당자별 뷰 (GROUP BY 담당자, SORT BY 일정 ASC), 차트 (GROUP BY 역할)
 
 ### 편집 규칙
 | 작업 | 위치 |
 |------|------|
-| 일정코드/카테고리/상태 변경 | Tasks DB (`장기업무_보드`) |
-| 담당자별 일정 메모 | Members DB (`장기업무_담당자`) `일정` 필드 |
+| 새 업무/담당자 추가 | Members DB에 행 추가 (담당자, 업무명, 일정, 역할 입력) |
 | 업무현황 업데이트 | Members DB 각자 행에 댓글 |
-| 새 업무 추가 | Tasks DB에 행 추가 → Members DB에서 담당자 배정 |
 
 ## Git Pre-push Hook
 push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채팅창에 출력

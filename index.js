@@ -513,27 +513,7 @@ async function buildSnapshotSection(dayPageId, membersDbId) {
   }
   if (memberRows.length === 0) return;
 
-  // 2. 유니크 task 페이지 ID 수집 후 병렬 조회
-  const taskIds = [...new Set(
-    memberRows.flatMap(r => (r.properties['업무']?.relation || []).map(rel => rel.id))
-  )];
-  const taskMap = {};
-  await Promise.all(taskIds.map(async id => {
-    try {
-      const page = await withRetry(() => notion.pages.retrieve({ page_id: id }));
-      const p = page.properties;
-      taskMap[id] = {
-        업무명:  propText(p['업무명']),
-        일정코드: propText(p['일정코드']),
-        상태:   p['상태']?.select?.name || '',
-        members: [],
-      };
-    } catch {
-      taskMap[id] = null;
-    }
-  }));
-
-  // 3. Members 행 댓글 수집 (per-person 업무현황)
+  // 2. 담당자 행 댓글 수집 (마지막 댓글 = 업무현황)
   const commentMap = {};
   for (const row of memberRows) {
     const res = await withRetry(() => notion.comments.list({ block_id: row.id, page_size: 100 }));
@@ -541,30 +521,34 @@ async function buildSnapshotSection(dayPageId, membersDbId) {
     commentMap[row.id] = last?.rich_text?.map(t => t.plain_text).join('') || '';
   }
 
-  // 4. Members → task 연결
-  for (const memberRow of memberRows) {
-    const taskId = memberRow.properties['업무']?.relation?.[0]?.id;
-    if (!taskId || !taskMap[taskId]) continue;
-    const p = memberRow.properties;
+  // 3. 일정 + 업무명 기준 그룹핑
+  const groupMap = {};
+  for (const row of memberRows) {
+    const p = row.properties;
+    const 업무명 = propText(p['업무명']);
+    const 일정  = propText(p['일정']);
     const 담당자 = propText(p['담당자']);
     const 역할  = (p['역할']?.multi_select || []).map(r => r.name).join('/');
-    if (담당자) taskMap[taskId].members.push({ 담당자, 역할, 업무현황: commentMap[memberRow.id] || '' });
+    if (!업무명) continue;
+    const key = `${일정}__${업무명}`;
+    if (!groupMap[key]) groupMap[key] = { 업무명, 일정, members: [] };
+    if (담당자) groupMap[key].members.push({ 담당자, 역할, 업무현황: commentMap[row.id] || '' });
   }
 
-  // 5. 일정코드 오름차순 정렬
-  const groupList = Object.values(taskMap)
-    .filter(g => g?.업무명)
-    .sort((a, b) => a.일정코드.localeCompare(b.일정코드, 'ko'));
+  // 4. 일정 오름차순 정렬
+  const groupList = Object.values(groupMap)
+    .sort((a, b) => a.일정.localeCompare(b.일정, 'ko'));
   if (groupList.length === 0) return;
 
-  // 6. 헤더 블록 + 담당자 서브블록 append
-  const headerBlocks = groupList.map(({ 업무명, 일정코드, 상태 }) => ({
+  // 5. 헤더 블록 append
+  const headerBlocks = groupList.map(({ 업무명, 일정 }) => ({
     object: 'block', type: 'bulleted_list_item',
-    bulleted_list_item: { rich_text: [{ type: 'text', text: { content: `[${상태 || '—'}] ${일정코드 ? 일정코드 + ' ' : ''}${업무명}` } }] },
+    bulleted_list_item: { rich_text: [{ type: 'text', text: { content: `${일정 ? 일정 + ' ' : ''}${업무명}` } }] },
   }));
 
   const headerRes = await withRetry(() => notion.blocks.children.append({ block_id: dayPageId, children: headerBlocks }));
 
+  // 6. 담당자 서브블록 append
   const count = Math.min(headerRes.results.length, groupList.length);
   for (let i = 0; i < count; i++) {
     const { members } = groupList[i];

@@ -16,7 +16,7 @@
 - `TELEGRAM_CHAT_ID` — 텔레그램 개인 DM ID (`5515513986`, notionDailyWorkLog 봇과의 개인 대화)
 - `APPLE_ID` — Apple ID 이메일
 - `APPLE_APP_PASSWORD` — Apple 앱 암호
-- `WORKTASK_DB_ID` — Tasks DB ID (`9e80cbf822064d7dae69e6fbdbb6134c`, "📊 장기업무") — 업무 1개 = 행 1개
+- `WORKTASK_DB_ID` — Tasks DB ID (`382e60ccff0c81968726e03c3b978099`, "📊 장기업무_태스크") — 업무 1개 = 행 1개
 - `MEMBERS_DB_ID` — Members DB ID (`384e60ccff0c8189811de0b01b9b2825`, "📊 장기업무_담당자") — 담당자 1명 = 행 1개, 독립 댓글
 - `BOARD_PAGE_ID` — 장기업무 보드 페이지 ID (`380e60ccff0c8121a545e0c5f7b9e233`)
 
@@ -113,8 +113,8 @@
 
 ## 장기업무 DB 구조 (두 DB)
 
-### Tasks DB (`📊 장기업무_보드`)
-- DB ID: `9e80cbf822064d7dae69e6fbdbb6134c` (`WORKTASK_DB_ID`)
+### Tasks DB (`📊 장기업무_태스크`)
+- DB ID: `382e60ccff0c81968726e03c3b978099` (`WORKTASK_DB_ID`)
 - 스키마: `업무명`(title), `일정코드`(rich_text), `카테고리`(select: 마일스톤/백로그/업무환경개선), `상태`(select: 진행중/대기중), `날짜`(date), `담당자`(person), `위치`(place)
 - **업무 1개 = 행 1개** (기본 뷰에서 중복 없음)
 - **일정코드/상태/카테고리 변경 → 여기서만**

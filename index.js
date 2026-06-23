@@ -632,6 +632,7 @@ async function refreshSnapshotInPage(fixedPageId) {
   }
   if (deleteFromIdx >= 0) {
     for (let i = deleteFromIdx; i < blocks.length; i++) {
+      if (blocks[i].type === 'child_database' || blocks[i].type === 'child_page') continue;
       await withRetry(() => notion.blocks.delete({ block_id: blocks[i].id }));
     }
   }

@@ -17,7 +17,7 @@
 - `APPLE_ID` — Apple ID 이메일
 - `APPLE_APP_PASSWORD` — Apple 앱 암호
 - `WORKTASK_DB_ID` — Tasks DB ID (`382e60ccff0c81968726e03c3b978099`, "📊 장기업무_태스크") — 업무 1개 = 행 1개
-- `MEMBERS_DB_ID` — Members DB ID (`384e60ccff0c8189811de0b01b9b2825`, "📊 장기업무_담당자") — 담당자 1명 = 행 1개, 독립 댓글
+- `MEMBERS_DB_ID` — Members DB ID (`34a853320af9421a8461b7fe56921720`, "📊 장기업무_담당자") — 담당자 1명 = 행 1개, 독립 댓글
 - `BOARD_PAGE_ID` — 장기업무 보드 페이지 ID (`380e60ccff0c8121a545e0c5f7b9e233`)
 
 ### review.js (pre-push 코드리뷰)
@@ -114,7 +114,7 @@
 ## 장기업무 DB 구조 (두 DB)
 
 ### Members DB (`📊 장기업무_담당자`) — 유일한 DB
-- DB ID: `384e60ccff0c8189811de0b01b9b2825` (`MEMBERS_DB_ID`)
+- DB ID: `34a853320af9421a8461b7fe56921720` (`MEMBERS_DB_ID`)
 - 스키마: `담당자`(title), `업무명`(text), `역할`(multi_select: 보스/이끌이/레벨/시스템/몬스터/네러티브/기믹), `일정`(text)
 - **담당자 1명 = 행 1개** (한 업무에 N명이면 N개 행)
 - 진행상황은 각 행의 **댓글**로 관리 → 매일 아침 스냅샷에서 마지막 댓글을 읽어 기록

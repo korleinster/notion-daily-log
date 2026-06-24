@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@notionhq/client": "^2.2.15",
+    "dotenv": "^17.4.2",
     "ical.js": "^2.2.1",
     "tsdav": "^2.2.0"
   }

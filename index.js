@@ -644,10 +644,14 @@ async function refreshSnapshotInPage(fixedPageId) {
   }));
   await buildSnapshotSection(fixedPageId, MEMBERS_DB_ID);
   if (BOARD_PAGE_ID) {
-    await withRetry(() => notion.blocks.children.append({
-      block_id: fixedPageId,
-      children: [{ object: 'block', type: 'link_to_page', link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID } }],
-    }));
+    try {
+      await withRetry(() => notion.blocks.children.append({
+        block_id: fixedPageId,
+        children: [{ object: 'block', type: 'link_to_page', link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID } }],
+      }));
+    } catch (e) {
+      console.warn('⚠️ 보드 링크 추가 실패 (인테그레이션 연결 확인 필요):', e.message);
+    }
   }
 }
 
@@ -724,10 +728,14 @@ ${weather}${calendarText}${itemsText}
     }));
     await buildSnapshotSection(backupPageId, MEMBERS_DB_ID);
     if (BOARD_PAGE_ID) {
-      await withRetry(() => notion.blocks.children.append({
-        block_id: backupPageId,
-        children: [{ object: 'block', type: 'link_to_page', link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID } }],
-      }));
+      try {
+        await withRetry(() => notion.blocks.children.append({
+          block_id: backupPageId,
+          children: [{ object: 'block', type: 'link_to_page', link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID } }],
+        }));
+      } catch (e) {
+        console.warn('⚠️ 보드 링크 추가 실패 (인테그레이션 연결 확인 필요):', e.message);
+      }
     }
     console.log(`✅ 백업 생성: ${dayPageTitle}`);
 

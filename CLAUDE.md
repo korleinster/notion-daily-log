@@ -25,12 +25,6 @@
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID` (개인 DM ID, `5515513986`)
 
-### workout-notify.js (운동 기록 알림 — README 미포함, 독립 스크립트)
-- `NOTION_TOKEN`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
-- `WORKOUT_PAGE_ID` (선택, 기본값 `372e60ccff0c8060b137e1b65779079b` 하드코딩)
-
 ## 핵심 파일
 - `index.js` — 메인 로직
 - `.github/workflows/daily-work-log.yml` — GitHub Actions 워크플로우 (KST 05:00, 평일만)
@@ -132,34 +126,6 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - 모델: `gemini-2.5-flash-lite` (free tier, 속도 최적화)
 - bash hook에서 Node.js 파일 분리 (shell escaping 문제 회피)
 - Telegram 전송 없음 — stdout으로만 출력 (Claude Bash 출력에 표시됨)
-
-## 운동 기록 알림 (workout-notify.js)
-- **README 미포함** — 개인 운동 기록용 독립 스크립트
-- 운동 페이지 구조: 운동(root) → `{year}년` → `{year}년_{MM}` → **Notion Database** (`child_database`)
-  - DB 이름: `운동기록` (ID: `1a3d24fc-9bca-444e-91ac-f6a55319669a`)
-  - DB 스키마 (Notion properties 방식으로 접근):
-    | 필드명 | 타입 | 비고 |
-    |--------|------|------|
-    | 날짜 | title | `M/D(요일)` 형식 (예: `6/1(월)`) |
-    | 운동종류 | select | 사이클/런닝/웨이트/걷기/수영 |
-    | 시간(분) | number | 숫자 (분 단위) |
-    | 강도 | text | |
-    | 평균BPM | number | |
-    | 최고BPM | number | |
-    | 칼로리 | number | |
-    | 체중(kg) | number | |
-    | 심박존분포 | text | |
-    | 메모 | text | |
-    | 트레이너피드백 | text | |
-  - `notion.databases.query()` API로 데이터 조회 (`table_row` 방식 아님)
-  - `propVal(prop)` 헬퍼로 title/rich_text/select/number 타입 통일 추출
-- 상태 파일 `.workout-notify-state.json`: `{ "date": "2026-06-01", "count": 1 }` 구조
-  - 날짜가 다르면 count 자동 리셋
-  - GitHub Actions Cache에 `workout-state-{date}-{run_id}` 키로 저장
-- 워크플로우 `workout-notify.yml`: KST 08:00~23:00 10분마다 실행 (`*/10 0-14,23 * * *` UTC)
-- 새 행 감지 시 개인DM으로 알림 전송 (운동 종류/시간/강도/kcal/BPM/체중/트레이너 피드백 요약)
-- 차트 삽입 기준: 기존 `image` 블록(캡션 `📊` 시작) 없으면 `child_database` 직전에 삽입
-
 
 ## Dead code (제거 가능)
 - `findLatestDayPage(monthPageId)` — 이전 구조에서 소스 페이지를 탐색하던 함수. FIXED_PAGE_ID 구조로 전환 후 main()에서 호출되지 않음

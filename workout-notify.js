@@ -27,12 +27,26 @@ const CHART_CAPTIONS = {
 
 // ── 헬퍼 함수 ─────────────────────────────────────────────────────────────────
 
-async function withRetry(fn, retries = 3, delay = 1000) {
+function isTransientError(err) {
+  const status = err?.status ?? err?.response?.status;
+  const code = err?.code ?? err?.cause?.code;
+  const message = String(err?.message || err || '');
+
+  return [429, 502, 503, 504].includes(status) ||
+    ['ECONNRESET', 'ETIMEDOUT'].includes(code) ||
+    /Premature close|fetch failed/i.test(message);
+}
+
+async function withRetry(fn, retries = 5, delay = 1000) {
   for (let i = 0; i < retries; i++) {
     try { return await fn(); }
     catch (err) {
       if (i === retries - 1) throw err;
-      await new Promise(r => setTimeout(r, delay * (i + 1)));
+      const waitMs = delay * (2 ** i);
+      if (isTransientError(err)) {
+        console.warn(`⏳ 일시적 오류 감지. ${waitMs}ms 후 재시도 (${i + 1}/${retries - 1}): ${err.message}`);
+      }
+      await new Promise(r => setTimeout(r, waitMs));
     }
   }
 }
@@ -511,5 +525,9 @@ async function main() {
 
 main().catch(err => {
   console.error('❌ 오류:', err.message);
+  if (isTransientError(err)) {
+    console.warn('⚠️ Notion/네트워크 일시 오류라서 이번 Workout Notify 실행은 실패 처리하지 않고 종료합니다.');
+    process.exit(0);
+  }
   process.exit(1);
 });

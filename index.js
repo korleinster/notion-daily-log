@@ -497,6 +497,12 @@ async function buildSnapshotSection(dayPageId, membersDbId) {
   const propText = prop =>
     prop?.rich_text?.map(t => t.plain_text).join('') ||
     prop?.title?.map(t => t.plain_text).join('') || '';
+  const propStatusName = prop =>
+    prop?.status?.name ||
+    prop?.select?.name ||
+    propText(prop);
+  const isCompletedRow = row =>
+    propStatusName(row.properties?.['상태']).trim() === '완료';
 
   // 1. Members DB 전체 조회
   const memberRows = [];
@@ -512,10 +518,12 @@ async function buildSnapshotSection(dayPageId, membersDbId) {
     cursor = res.next_cursor;
   }
   if (memberRows.length === 0) return;
+  const activeMemberRows = memberRows.filter(row => !isCompletedRow(row));
+  if (activeMemberRows.length === 0) return;
 
   // 2. 담당자 행 댓글 수집 (마지막 댓글 = 업무현황)
   const commentMap = {};
-  for (const row of memberRows) {
+  for (const row of activeMemberRows) {
     const res = await withRetry(() => notion.comments.list({ block_id: row.id, page_size: 100 }));
     const last = res.results[res.results.length - 1];
     commentMap[row.id] = last?.rich_text?.map(t => t.plain_text).join('') || '';
@@ -523,7 +531,7 @@ async function buildSnapshotSection(dayPageId, membersDbId) {
 
   // 3. 일정 + 업무명 기준 그룹핑
   const groupMap = {};
-  for (const row of memberRows) {
+  for (const row of activeMemberRows) {
     const p = row.properties;
     const 업무명 = propText(p['업무명']);
     const 일정  = propText(p['일정']);

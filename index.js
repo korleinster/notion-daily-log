@@ -7,9 +7,6 @@ const notion = new Client({ auth: process.env.NOTION_TOKEN });
 const ROOT_PAGE_ID = process.env.DAILY_LOG_PAGE_ID;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const WORKTASK_DB_ID = process.env.WORKTASK_DB_ID;
-const MEMBERS_DB_ID  = process.env.MEMBERS_DB_ID;
-const BOARD_PAGE_ID = process.env.BOARD_PAGE_ID;
 const FIXED_PAGE_ID = process.env.FIXED_PAGE_ID;
 
 const REQUIRED_ENV = ['NOTION_TOKEN', 'DAILY_LOG_PAGE_ID', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
@@ -473,102 +470,12 @@ async function findPersonalBlocks(sourcePageId) {
   // 신 레이아웃: divider / link_to_page / 📋로 시작하는 블록 이전까지
   const personal = [];
   for (const block of blocks) {
-    if (block.type === 'divider' || block.type === 'link_to_page') break;
+    if (block.type === 'divider' || block.type === 'link_to_page' || block.type === 'child_database') break;
     const text = block[block.type]?.rich_text ? extractText(block[block.type].rich_text) : '';
     if (text.startsWith('📋')) break;
     personal.push(block);
   }
   return personal;
-}
-
-// ──────────────────────────────────────────────
-// 장기업무 스냅샷 섹션 생성
-// Members DB 전체 조회 → 업무 relation으로 task 페이지 병렬 조회 → 댓글 수집
-// Tasks DB를 직접 쿼리하지 않고 pages.retrieve로 개별 접근
-// ──────────────────────────────────────────────
-async function buildSnapshotSection(dayPageId, membersDbId) {
-  await withRetry(() => notion.blocks.children.append({
-    block_id: dayPageId,
-    children: [{ object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '📋 오늘의 장기업무 현황' } }] } }],
-  }));
-
-  if (!membersDbId) return;
-
-  const propText = prop =>
-    prop?.rich_text?.map(t => t.plain_text).join('') ||
-    prop?.title?.map(t => t.plain_text).join('') || '';
-  const propStatusName = prop =>
-    prop?.status?.name ||
-    prop?.select?.name ||
-    propText(prop);
-  const isCompletedRow = row =>
-    propStatusName(row.properties?.['상태']).trim() === '완료';
-
-  // 1. Members DB 전체 조회
-  const memberRows = [];
-  let cursor;
-  while (true) {
-    const res = await withRetry(() => notion.databases.query({
-      database_id: membersDbId,
-      page_size: 100,
-      ...(cursor ? { start_cursor: cursor } : {}),
-    }));
-    memberRows.push(...res.results);
-    if (!res.has_more) break;
-    cursor = res.next_cursor;
-  }
-  if (memberRows.length === 0) return;
-  const activeMemberRows = memberRows.filter(row => !isCompletedRow(row));
-  if (activeMemberRows.length === 0) return;
-
-  // 2. 담당자 행 댓글 수집 (마지막 댓글 = 업무현황)
-  const commentMap = {};
-  for (const row of activeMemberRows) {
-    const res = await withRetry(() => notion.comments.list({ block_id: row.id, page_size: 100 }));
-    const last = res.results[res.results.length - 1];
-    commentMap[row.id] = last?.rich_text?.map(t => t.plain_text).join('') || '';
-  }
-
-  // 3. 일정 + 업무명 기준 그룹핑
-  const groupMap = {};
-  for (const row of activeMemberRows) {
-    const p = row.properties;
-    const 업무명 = propText(p['업무명']);
-    const 일정  = propText(p['일정']);
-    const 담당자 = propText(p['담당자']);
-    const 역할  = (p['역할']?.multi_select || []).map(r => r.name).join('/');
-    if (!업무명) continue;
-    const key = `${일정}__${업무명}`;
-    if (!groupMap[key]) groupMap[key] = { 업무명, 일정, members: [] };
-    if (담당자) groupMap[key].members.push({ 담당자, 역할, 업무현황: commentMap[row.id] || '' });
-  }
-
-  // 4. 일정 오름차순 정렬
-  const groupList = Object.values(groupMap)
-    .sort((a, b) => a.일정.localeCompare(b.일정, 'ko'));
-  if (groupList.length === 0) return;
-
-  // 5. 헤더 블록 append
-  const headerBlocks = groupList.map(({ 업무명, 일정 }) => ({
-    object: 'block', type: 'bulleted_list_item',
-    bulleted_list_item: { rich_text: [{ type: 'text', text: { content: `${일정 ? 일정 + ' ' : ''}${업무명}` } }] },
-  }));
-
-  const headerRes = await withRetry(() => notion.blocks.children.append({ block_id: dayPageId, children: headerBlocks }));
-
-  // 6. 담당자 서브블록 append
-  const count = Math.min(headerRes.results.length, groupList.length);
-  for (let i = 0; i < count; i++) {
-    const { members } = groupList[i];
-    if (members.length === 0) continue;
-    await withRetry(() => notion.blocks.children.append({
-      block_id: headerRes.results[i].id,
-      children: members.map(({ 담당자, 역할, 업무현황 }) => ({
-        object: 'block', type: 'bulleted_list_item',
-        bulleted_list_item: { rich_text: [{ type: 'text', text: { content: `${담당자}${역할 ? ` (${역할})` : ''}: ${업무현황 || '—'}` } }] },
-      })),
-    }));
-  }
 }
 
 // ──────────────────────────────────────────────
@@ -606,7 +513,7 @@ async function clearPersonalSection(fixedPageId, dateInfo) {
   const today = new Date(Date.UTC(Number(dateInfo.year), Number(dateInfo.month) - 1, Number(dateInfo.day)));
   const blocks = await getAllBlocks(fixedPageId);
   for (const block of blocks) {
-    if (block.type === 'divider' || block.type === 'link_to_page') break;
+    if (block.type === 'divider' || block.type === 'link_to_page' || block.type === 'child_database') break;
     const t = block.type;
     const text = block[t]?.rich_text ? extractText(block[t].rich_text) : '';
     if (text.startsWith('📋')) break;
@@ -617,48 +524,6 @@ async function clearPersonalSection(fixedPageId, dateInfo) {
     }
     if (block.has_children) {
       await deleteCheckedTodosRecursive(block.id, dateInfo, text === '연차');
-    }
-  }
-}
-
-// 고정 페이지 하단 divider+스냅샷 삭제 후 재생성
-async function refreshSnapshotInPage(fixedPageId) {
-  const blocks = await getAllBlocks(fixedPageId);
-
-  // divider 또는 📋 heading_2 이후 블록 전부 삭제 (divider 포함)
-  let deleteFromIdx = -1;
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i];
-    if (block.type === 'divider' && deleteFromIdx === -1) {
-      deleteFromIdx = i;
-      break;
-    }
-    if (block.type === 'heading_2') {
-      const text = extractText(block.heading_2.rich_text);
-      if (text.startsWith('📋')) { deleteFromIdx = i; break; }
-    }
-  }
-  if (deleteFromIdx >= 0) {
-    for (let i = deleteFromIdx; i < blocks.length; i++) {
-      if (blocks[i].type === 'child_database' || blocks[i].type === 'child_page') continue;
-      await withRetry(() => notion.blocks.delete({ block_id: blocks[i].id }));
-    }
-  }
-
-  // divider + 새 스냅샷 + 보드 링크 추가
-  await withRetry(() => notion.blocks.children.append({
-    block_id: fixedPageId,
-    children: [{ object: 'block', type: 'divider', divider: {} }],
-  }));
-  await buildSnapshotSection(fixedPageId, MEMBERS_DB_ID);
-  if (BOARD_PAGE_ID) {
-    try {
-      await withRetry(() => notion.blocks.children.append({
-        block_id: fixedPageId,
-        children: [{ object: 'block', type: 'link_to_page', link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID } }],
-      }));
-    } catch (e) {
-      console.warn('⚠️ 보드 링크 추가 실패 (인테그레이션 연결 확인 필요):', e.message);
     }
   }
 }
@@ -704,10 +569,9 @@ ${weather}${calendarText}
     const monthPageId = await findOrCreatePage(yearPageId, `${year}_${month}`);
     const existingBackup = await findPage(monthPageId, dayPageTitle);
 
-    // 중복 실행: 스냅샷만 갱신 후 재전송
+    // 중복 실행: 기존 백업은 유지하고 알림만 재전송
     if (existingBackup) {
-      console.log('⚠️ 오늘 백업이 이미 존재합니다. 스냅샷 갱신 후 재전송합니다.');
-      await refreshSnapshotInPage(FIXED_PAGE_ID);
+      console.log('⚠️ 오늘 백업이 이미 존재합니다. 알림만 재전송합니다.');
       const addedItems = [];
       const personalBlocks = await findPersonalBlocks(FIXED_PAGE_ID);
       await collectTodos(personalBlocks, addedItems);
@@ -718,7 +582,7 @@ ${weather}${calendarText}
 📅 <b>${todayStr} ${dayName}요일</b>
 ${weather}${calendarText}${itemsText}
 
-이미 백업이 있어서 스냅샷 갱신 후 다시 보내드렸어요~ 📋`
+이미 백업이 있어서 일지 생성은 건너뛰고 다시 보내드렸어요~ 📋`
       );
       return;
     }
@@ -730,26 +594,10 @@ ${weather}${calendarText}${itemsText}
     // 1. 날짜 백업 생성 (연/월 계층)
     const backupPageId = await findOrCreatePage(monthPageId, dayPageTitle);
     await appendBlocksRecursive(backupPageId, sourcePersonalBlocks, dateInfo);
-    await withRetry(() => notion.blocks.children.append({
-      block_id: backupPageId,
-      children: [{ object: 'block', type: 'divider', divider: {} }],
-    }));
-    await buildSnapshotSection(backupPageId, MEMBERS_DB_ID);
-    if (BOARD_PAGE_ID) {
-      try {
-        await withRetry(() => notion.blocks.children.append({
-          block_id: backupPageId,
-          children: [{ object: 'block', type: 'link_to_page', link_to_page: { type: 'page_id', page_id: BOARD_PAGE_ID } }],
-        }));
-      } catch (e) {
-        console.warn('⚠️ 보드 링크 추가 실패 (인테그레이션 연결 확인 필요):', e.message);
-      }
-    }
     console.log(`✅ 백업 생성: ${dayPageTitle}`);
 
-    // 2. 고정 페이지: 완료 항목 삭제 + 스냅샷 갱신
+    // 2. 고정 페이지: 완료 항목 삭제
     await clearPersonalSection(FIXED_PAGE_ID, dateInfo);
-    await refreshSnapshotInPage(FIXED_PAGE_ID);
     console.log('✅ 고정 페이지 갱신 완료');
 
     // 3. 텔레그램 전송 (백업 생성 전 개인 섹션 기준으로 할 일 수집)

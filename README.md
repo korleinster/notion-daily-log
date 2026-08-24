@@ -1,6 +1,6 @@
 # 📓 Notion Daily Log Bot
 
-> Every morning, a Notion daily log is created automatically and your weather, calendar, and tasks are sent to Telegram.
+> Every morning, a Notion daily log is created automatically and your weather, calendar, and to-dos are sent to Telegram.
 
 **Notion Daily Log Bot** is a personal automation tool that runs every weekday morning via GitHub Actions.  
 It creates a new daily log page in Notion (cloned from the previous day), fetches weather data and iCloud Calendar events, then sends a morning briefing to a Telegram personal DM — all without touching your computer.
@@ -18,8 +18,6 @@ It creates a new daily log page in Notion (cloned from the previous day), fetche
 |------|------|
 | 📌 **Fixed working page** | User always works on the same page (`📌 오늘의 업무`); no need to navigate to a new page each day |
 | 📄 **Daily backup** | Each morning, clones the fixed page's personal section into a dated backup page (year/month hierarchy) |
-| 📋 **Long-term task snapshot** | Queries a permanent Notion DB each morning; reads the last comment on each row as the status and writes a snapshot into the daily log |
-| 🗂 **Kanban board** | Permanent task DB with two board views (by status, by assignee), both sorted by schedule code |
 | 🌤 **Weather info** | Fetches today's weather via Open-Meteo API (free, no key required) |
 | 📆 **Calendar integration** | Shows today + next 3 days via iCloud CalDAV, supports recurring events |
 | 📬 **Telegram notifications** | Sends weather, schedule, and tasks to your personal DM every morning |
@@ -41,27 +39,14 @@ If this project has been useful, consider sponsoring. It makes a big difference 
 Daily Work Log (ROOT_PAGE_ID)
 ├── 📌 오늘의 업무          ← Fixed working page (FIXED_PAGE_ID) — always stay here
 │     ├── 🔥 나의 업무 현황   (todos / leave — user manages directly)
-│     ├── ---
-│     ├── 📋 오늘의 장기업무 현황  (auto-refreshed every morning)
-│     └── 🔗 장기업무 보드 →
 │
 ├── 2026
 │   └── 2026_06
 │       └── 2026_06_16 (Tue)  ← dated backup (cloned from fixed page)
-│
-├── 📊 장기업무_보드         ← Tasks DB (WORKTASK_DB_ID) — one row per TASK
-│   (업무명, 일정코드, 카테고리, 상태, 날짜, 담당자/person, 위치)
-│   ├── 업무단위 보드  (GROUP BY 카테고리)
-│   └── 담당자별 보드  (GROUP BY 상태, SORT BY 일정코드 ASC)
-│
-└── 📊 장기업무_담당자       ← Members DB (MEMBERS_DB_ID) — one row per PERSON per task
-    (담당자/title, 업무→relation, 역할, 일정/text, 상태_rollup)
-    ├── 담당자별 뷰  (GROUP BY 담당자, SORT BY 일정 ASC)
-    └── 차트 뷰  (GROUP BY 역할)
 ```
 
 - User always works on the fixed page — no need to navigate to a new page each day
-- Each morning: fixed page's personal section is backed up as a dated page, then completed todos are removed and the snapshot is refreshed
+- Each morning: fixed page's personal section is backed up as a dated page, then completed todos and expired leave items are removed
 - Completed to-dos and expired leave items are removed from the fixed page (not the backup)
 - On weekends, no backup is created — only the Telegram message is sent
 
@@ -74,26 +59,7 @@ The script uses a single **fixed working page** as the source for all daily back
 1. Create a page titled `📌 오늘의 업무` directly under the Daily Work Log root page
 2. Add your personal section (todos, leave, backlog)
 3. Set `FIXED_PAGE_ID` to this page's ID in `.env` and GitHub Secrets
-4. From then on, the script will back up this page each morning and refresh its snapshot
-
-### Long-term Task DB setup (one-time via migration script)
-
-Two databases are required. Run `migrate-v2.js` to set them up automatically from existing data.
-
-**Tasks DB (`📊 장기업무`)** — one row per task:
-- Schema: `업무명` (title), `일정코드` (text), `카테고리` (select), `상태` (select)
-- Board view: grouped by `상태`, sorted by `일정코드` ASC, with `일정코드` shown on cards
-- `일정코드`/`상태` changes happen here only
-
-**Members DB (`📊 장기업무_담당자`)** — one row per person per task:
-- Schema: `담당자` (title), `업무` (relation → Tasks DB), `역할` (multi-select), `일정코드_rollup`, `상태_rollup`
-- Board view: grouped by `담당자`, sorted by `일정코드_rollup` ASC
-- Progress updates are tracked via **row-level comments** (read last comment per row as status)
-
-**After running `migrate-v2.js --execute`**:
-1. Manually add rollup columns to Members DB: `일정코드_rollup` and `상태_rollup` (via `업무` relation)
-2. Add `MEMBERS_DB_ID` to GitHub Secrets and local `.env`
-3. Enable **Read comments** and **Insert comments** on the Notion integration (notion.so/my-integrations)
+4. From then on, the script will back up this page each morning and clean up completed todos and expired leave items
 
 ---
 
@@ -122,7 +88,7 @@ Two databases are required. Run `migrate-v2.js` to set them up automatically fro
 ```
 
 ### Weekday (duplicate run)
-- Same structure, closing line changes to: `이미 백업이 있어서 스냅샷 갱신 후 다시 보내드렸어요~ 📋`
+- Same structure, closing line changes to: `이미 백업이 있어서 일지 생성은 건너뛰고 다시 보내드렸어요~ 📋`
 
 ### Weekend run (no duplicate check)
 - Weather + schedule only (no to-dos) + `푹 쉬고 충전하는 하루 되세요! 🌿`
@@ -154,9 +120,6 @@ Two databases are required. Run `migrate-v2.js` to set them up automatically fro
 | `TELEGRAM_CHAT_ID` | Telegram personal DM ID |
 | `APPLE_ID` | Apple ID email (for iCloud Calendar; skipped if missing) |
 | `APPLE_APP_PASSWORD` | Apple app-specific password (for iCloud Calendar; skipped if missing) |
-| `WORKTASK_DB_ID` | Tasks DB ID (`📊 장기업무`) — one row per task, source of truth for 일정코드/상태 |
-| `MEMBERS_DB_ID` | Members DB ID (`📊 장기업무_담당자`) — one row per person per task, holds progress comments |
-| `BOARD_PAGE_ID` | Long-term task board page ID (linked at the bottom of the fixed page) |
 | `FIXED_PAGE_ID` | Fixed working page ID (`📌 오늘의 업무`) — the page the user always works from |
 
 ### Local only (`.env` + pre-push hook)

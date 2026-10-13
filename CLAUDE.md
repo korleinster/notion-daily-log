@@ -1,4 +1,21 @@
-# notion-daily-log
+# notion-daily-log — current operating note
+
+The current operator-facing setup and notification contract is in
+[`README.md`](./README.md); the external heartbeat/uptime monitor and its
+Revision 2 artifact-state behavior are in
+[`docs/UPTIME-MONITOR.md`](./docs/UPTIME-MONITOR.md). Treat older implementation
+notes below as historical where they conflict with those current guides.
+
+Slack corrective Revision 2 was approved for direct local execution and is
+historically implemented locally; Revision 3 was approved for direct local
+execution on 2026-10-12. Its path correction and docs passed independent QA:
+29 Python 3.12 uptime tests and 10 Node 22.23.3 notification tests. Overall R3
+local acceptance is **BLOCKED** by a separate Discord sanitizer regression.
+Revision 4 is approved but not yet implemented. Nothing is provisioned,
+deployed, or activated. Preserve the existing Notion integration, page/task
+behavior, and schedule. The last read-only GitHub provisioning check was
+2026-09-30 and found required Slack settings absent; no values were read and no
+recheck has been made.
 
 ## 프로젝트 개요
 - **경로**: `/Users/leinster/Documents/Claude/Notion/notion-daily-log`
@@ -89,5 +106,5 @@ push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채�
 - `gemini-2.5-flash`는 thinking 모드로 느림 → `flash-lite` 사용
 - iCloud Drive 특성상 Git 명령이 hang할 수 있음 — 파일 로컬 가용 여부 먼저 확인
 - README 수정 시 CLAUDE.md에도 반영 필요
-- 워크플로우 파일은 `.github/workflows/daily-work-log.yml` 하나만 존재 (루트의 `daily-work-log.yml`은 삭제됨 — GitHub Actions는 `.github/workflows/`만 읽음)
+- Notion 저장소에는 `.github/workflows/daily-work-log.yml`(일일 작업)과 `.github/workflows/macmini-uptime.yml`(외부 감시) 워크플로우가 있다. 일일 작업의 기존 스케줄과 페이지 동작은 유지한다.
 - `sendTelegram`은 `ok: false` 응답 및 JSON 파싱 실패 시 reject 처리됨 (에러 조용히 무시하지 않음)

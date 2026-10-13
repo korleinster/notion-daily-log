@@ -4,58 +4,67 @@ on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: 'Explicitly create the initial monitoring artifact after installation'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: macmini-uptime-monitor
+  cancel-in-progress: false
 
 jobs:
   check-heartbeat:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
-
+    timeout-minutes: 5
     steps:
-      - name: Check Mac Mini heartbeat
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare monitoring claims and checkpoint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPTIME_BOOTSTRAP: ${{ inputs.bootstrap || false }}
+          GIST_ID: ${{ secrets.MACMINI_GIST_ID }}
+          GIST_TOKEN: ${{ secrets.MACMINI_GIST_TOKEN }}
+          OPS_NOTIFICATION_BACKEND: ${{ vars.OPS_NOTIFICATION_BACKEND || 'telegram' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ALERTS_CHANNEL_ID: ${{ vars.SLACK_ALERTS_CHANNEL_ID }}
+          MACMINI_WAN_IP: ${{ secrets.MACMINI_WAN_IP }}
+          MACMINI_MAC: "68:5b:35:b3:48:94"
+        run: python3 scripts/uptime/monitor.py prepare
+      - name: Upload independent monitoring state
+        id: upload-state
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macmini-monitor-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/monitor-state.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Verify persisted claim before effects
+        env:
+          ARTIFACT_ID: ${{ steps.upload-state.outputs.artifact-id }}
+        run: |
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || { echo '::error::Monitoring artifact upload has no valid ID'; exit 1; }
+      - name: Attempt claimed notification and WOL effects once
         env:
           GIST_ID: ${{ secrets.MACMINI_GIST_ID }}
           GIST_TOKEN: ${{ secrets.MACMINI_GIST_TOKEN }}
+          OPS_NOTIFICATION_BACKEND: ${{ vars.OPS_NOTIFICATION_BACKEND || 'telegram' }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_ALERTS_CHANNEL_ID: ${{ vars.SLACK_ALERTS_CHANNEL_ID }}
           MACMINI_WAN_IP: ${{ secrets.MACMINI_WAN_IP }}
           MACMINI_MAC: "68:5b:35:b3:48:94"
-        run: |
-          RESPONSE=$(curl -s \
-            -H "Authorization: token ${GIST_TOKEN}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/gists/${GIST_ID}")
-
-          UPDATED_AT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['updated_at'])")
-          UPDATED_TS=$(date -d "$UPDATED_AT" +%s)
-          NOW_TS=$(date +%s)
-          DIFF=$(( (NOW_TS - UPDATED_TS) / 60 ))
-
-          echo "Last heartbeat: ${DIFF} minutes ago (${UPDATED_AT})"
-
-          if [ "$DIFF" -gt 15 ]; then
-            echo "Mac Mini appears offline. Sending WOL magic packet..."
-
-            python3 << 'PYEOF'
-import socket, struct, os
-
-mac = os.environ["MACMINI_MAC"].replace(":", "")
-wan_ip = os.environ["MACMINI_WAN_IP"]
-port = 9002
-
-magic = bytes.fromhex("F" * 12 + mac * 16)
-with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    s.sendto(magic, (wan_ip, port))
-print(f"WOL magic packet sent to {wan_ip}:{port}")
-PYEOF
-
-            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-              -d chat_id="${TELEGRAM_CHAT_ID}" \
-              -d text="🚨 *Mac Mini Down Alert*
-
-Last heartbeat: ${DIFF} minutes ago
-WOL magic packet sent → attempting auto wake-up.
-
-If it doesn't recover in 5 minutes, check the router or power." \
-              -d parse_mode="Markdown"
-          fi
+          GITHUB_TOKEN: ${{ github.token }}
+          UPTIME_ARTIFACT_ID: ${{ steps.upload-state.outputs.artifact-id }}
+        run: python3 scripts/uptime/monitor.py effects

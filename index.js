@@ -2,47 +2,26 @@ const { Client } = require('@notionhq/client');
 const { DAVClient } = require('tsdav');
 const ICAL = require('ical.js');
 const https = require('https');
+const { createNotifier, NotificationError } = require('./notifications');
 
 const notion = new Client({ auth: process.env.NOTION_TOKEN });
 const ROOT_PAGE_ID = process.env.DAILY_LOG_PAGE_ID;
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const FIXED_PAGE_ID = process.env.FIXED_PAGE_ID;
 
-const REQUIRED_ENV = ['NOTION_TOKEN', 'DAILY_LOG_PAGE_ID', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+const REQUIRED_ENV = ['NOTION_TOKEN', 'DAILY_LOG_PAGE_ID'];
 for (const key of REQUIRED_ENV) {
   if (!process.env[key]) { console.error(`❌ 환경변수 누락: ${key}`); process.exit(1); }
+}
+let notifier;
+try {
+  notifier = createNotifier(process.env);
+} catch (err) {
+  console.error(`❌ 알림 설정 오류: ${err.message}`);
+  process.exit(1);
 }
 
 const LAT = 37.4449;
 const LON = 127.1388;
-
-async function sendTelegram(message) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' });
-    const req = https.request({
-      hostname: 'api.telegram.org',
-      path: `/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }, res => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          if (!parsed.ok) reject(new Error(`Telegram API 오류: ${parsed.description}`));
-          else resolve(parsed);
-        } catch (e) {
-          reject(new Error(`Telegram 응답 파싱 실패: ${data.slice(0, 100)}`));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
-}
 
 async function httpGet(hostname, path) {
   return new Promise((resolve, reject) => {
@@ -125,7 +104,7 @@ async function getCalendarEvents() {
           calendar,
           timeRange: { start: todayStart.toISOString(), end: rangeEnd.toISOString() },
         });
-      } catch (e) { console.warn('캘린더 객체 로드 실패:', calendar.displayName, e.message); continue; }
+      } catch (e) { console.warn('캘린더 객체 로드 실패'); continue; }
 
       for (const obj of calObjects) {
         if (!obj.data) continue;
@@ -163,7 +142,7 @@ async function getCalendarEvents() {
               }
             }
           }
-        } catch (e) { console.warn('iCal 파싱 오류 무시:', e.message); }
+        } catch (e) { console.warn('iCal 파싱 오류 무시'); }
       }
     }
 
@@ -174,7 +153,7 @@ async function getCalendarEvents() {
     });
     return events;
   } catch (e) {
-    console.error('캘린더 로드 오류:', e.message);
+    console.error('캘린더 로드 오류');
     return null;
   }
 }
@@ -551,7 +530,7 @@ async function main() {
 
     if (isWeekend) {
       console.log('🏖 주말이에요. 일지 생성 없이 메시지만 전송합니다.');
-      await sendTelegram(
+      await notifier.sendRoutine(
 `🌅 좋은 아침이에요! 즐거운 주말 보내세요 😊
 
 📅 <b>${todayStr} ${dayName}요일</b>
@@ -576,7 +555,7 @@ ${weather}${calendarText}
       const personalBlocks = await findPersonalBlocks(FIXED_PAGE_ID);
       await collectTodos(personalBlocks, addedItems);
       const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';
-      await sendTelegram(
+      await notifier.sendRoutine(
 `🌅 좋은 아침이에요! 오늘도 화이팅입니다 😊
 
 📅 <b>${todayStr} ${dayName}요일</b>
@@ -600,12 +579,12 @@ ${weather}${calendarText}${itemsText}
     await clearPersonalSection(FIXED_PAGE_ID, dateInfo);
     console.log('✅ 고정 페이지 갱신 완료');
 
-    // 3. 텔레그램 전송 (백업 생성 전 개인 섹션 기준으로 할 일 수집)
+    // 3. 아침 알림 전송 (백업 생성 전 개인 섹션 기준으로 할 일 수집)
     const addedItems = [];
     await collectTodos(sourcePersonalBlocks, addedItems);
     const itemsText = addedItems.length > 0 ? `\n\n<b>📋 오늘의 할 일</b>\n${addedItems.join('\n')}` : '';
 
-    await sendTelegram(
+    await notifier.sendRoutine(
 `🌅 좋은 아침이에요! 오늘도 화이팅입니다 😊
 
 📅 <b>${todayStr} ${dayName}요일</b>
@@ -615,16 +594,22 @@ ${weather}${calendarText}${itemsText}
     );
 
   } catch (err) {
-    console.error('❌ 오류 발생:', err);
-    await sendTelegram(
+    console.error(err instanceof NotificationError ? '❌ 아침 알림 전송 실패' : '❌ 일일업무일지 실행 실패');
+    if (!(err instanceof NotificationError)) {
+      try {
+        await notifier.sendAlert(
 `😥 앗, 오늘 일지 작성 중에 문제가 생겼어요.
 
 📅 ${todayStr}
-❌ 오류 내용: ${err.message}
+❌ 자동화 실행 중 오류가 발생했어. 실행 상태를 확인해줘.
 
 확인 부탁드려요!`
-    );
-    process.exit(1);
+        );
+      } catch (_) {
+        console.error('❌ 실패 알림 전송 실패');
+      }
+    }
+    process.exitCode = 1;
   }
 }
 

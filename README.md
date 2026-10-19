@@ -136,43 +136,47 @@ The examples below show message content; both providers now receive safe plain t
 The notification adapter and corrective Revision 3 are implemented locally;
 Notion's R3 scope independently passed QA (29 Python 3.12 uptime tests and 10
 Node 22.23.3 notification tests). Overall R3 local acceptance is **BLOCKED** by
-a separate Discord sanitizer finding. Approved Revision 4 is not yet
-implemented; Slack delivery is **not live**. R3 accepts only the exact trusted workflow path
-forms `.github/workflows/macmini-uptime.yml`, `@main`, and
+a separate Discord sanitizer finding. Protected Slack settings were provisioned
+on 2026-10-15, but the current main branch (`7d81282`) still uses Telegram and
+no Slack release is active. Slack delivery is therefore **not live**; this is
+not a fully migrated or cutover system. R3 accepts only the exact trusted
+workflow path forms `.github/workflows/macmini-uptime.yml`, `@main`, and
 `@refs/heads/main`; all other provenance and artifact-integrity gates remain
 enforced. Slack-only mode does not require Telegram credentials. Messages are
 capped at 3,000 characters, neutralize Slack mentions, suppress unfurls, and do
 not include raw service error responses or credentials. Unknown delivery
 outcomes are not retried; HTTP 429 may receive one bounded retry.
 
-For a future approved rollout, install the private workspace Slack app and
-invite it only to the private routine and alerts channels. Grant only the
-`chat:write` posting permission required by this workflow; do not grant channel
-history or workspace-admin access. Store `SLACK_BOT_TOKEN` only in the
-repository's protected GitHub Actions Secrets, and keep channel IDs and
-`OPS_NOTIFICATION_BACKEND` in GitHub Actions Variables. Never put credential
-values in workflow YAML, committed files, logs, or test fixtures. The existing
-Notion integration, its page access, daily page/task behavior, and morning
-schedule are unchanged by the notification adapter.
+The private workspace Slack app and protected settings are provisioned, but
+the sender is not released or active on the current main branch. Before a
+separately approved rollout, verify the app's existing access to the private
+routine and alerts channels and its least-privilege `chat:write` permission;
+do not add permissions or replace credentials as part of documentation work.
+Keep credential values only in protected GitHub Actions Secrets, and channel
+IDs and `OPS_NOTIFICATION_BACKEND` in GitHub Actions Variables. Never put
+credential values in workflow YAML, committed files, logs, or test fixtures.
+The existing Notion integration, its page access, daily page/task behavior,
+and morning schedule are unchanged by the notification adapter.
 
-The last read-only check, on 2026-09-30, found no Slack secret names or
-Slack/backend variables configured; no secret values were read. This has not
-been rechecked since then. Do not treat Slack delivery as configured or
-ready until those protected settings are provisioned and separately accepted.
+The 2026-10-15 provisioning check found the required protected Slack settings
+present; secret values were not read. Provisioning alone does not activate the
+sender: the current main branch still uses Telegram, no Slack release is
+active, and no 72-hour observation has started. Do not treat Notion as migrated
+or cut over until the separately gated release and acceptance steps pass. Do
+not create a replacement secret merely because older documentation described
+the settings as absent.
 
 The existing Notion integration, page access, daily page/task behavior, and
 weekday schedule are unchanged. R3 passed 29/29 uptime tests on Python 3.12 and
 10/10 notification cases on Node 22.23.3, with syntax and workflow checks.
-These checks do not verify the real GitHub Ubuntu workflow, Slack receipt, or
-provisioning. Live acceptance and any 72-hour observation have not begun.
+These checks do not verify the real GitHub Ubuntu workflow or Slack receipt.
+Live acceptance and any 72-hour observation have not begun.
 
 ### Local only (`.env` + pre-push hook)
 
 | Variable | Description |
 |--------|------|
 | `GEMINI_API_KEY` | Gemini API key (for pre-push code review) |
-| `TELEGRAM_BOT_TOKEN` | Same as above |
-| `TELEGRAM_CHAT_ID` | Same as above |
 
 Run the fake-only notification tests with `node --test tests/notifications.test.js`. Do not run the live daily workflow as a test of the transport change.
 

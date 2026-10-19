@@ -11,11 +11,12 @@ historically implemented locally; Revision 3 was approved for direct local
 execution on 2026-10-12. Its path correction and docs passed independent QA:
 29 Python 3.12 uptime tests and 10 Node 22.23.3 notification tests. Overall R3
 local acceptance is **BLOCKED** by a separate Discord sanitizer regression.
-Revision 4 is approved but not yet implemented. Nothing is provisioned,
-deployed, or activated. Preserve the existing Notion integration, page/task
-behavior, and schedule. The last read-only GitHub provisioning check was
-2026-09-30 and found required Slack settings absent; no values were read and no
-recheck has been made.
+Protected Slack settings were provisioned on 2026-10-15, but the current main
+branch (`7d81282`) still uses Telegram and no Slack release is active. This is
+not a completed migration or provider cutover. The 72-hour observation has not
+started. Preserve the existing Notion integration, page/task behavior, and
+schedule; do not request a replacement secret based on the superseded
+2026-09-30 check, which found the settings absent and did not read values.
 
 ## 프로젝트 개요
 - **경로**: `/Users/leinster/Documents/Claude/Notion/notion-daily-log`
@@ -36,14 +37,16 @@ recheck has been made.
 
 ### review.js (pre-push 코드리뷰)
 - `GEMINI_API_KEY`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID` (개인 DM ID, `5515513986`)
+
+The active local `.git/hooks/review.js` runs Gemini code review only and does
+not send Telegram messages. Its hook files are local-only and are not part of
+the repository release.
 
 ## 핵심 파일
 - `index.js` — 메인 로직
 - `.github/workflows/daily-work-log.yml` — GitHub Actions 워크플로우 (KST 05:00, 평일만)
 - `.git/hooks/pre-push` — bash 진입점
-- `.git/hooks/review.js` — Gemini 코드리뷰 + Telegram 전송 로직
+- `.git/hooks/review.js` — Gemini 코드리뷰 (Telegram 전송 없음)
 
 ## Notion 구조
 
@@ -91,10 +94,10 @@ recheck has been made.
 - 오전/오후 반차도 날짜 기준으로만 판단
 
 ## Git Pre-push Hook
-push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 Claude 채팅창에 출력
+push 시 `index.js`를 Gemini가 자동 코드리뷰하고 결과를 stdout에 출력
 - 모델: `gemini-2.5-flash-lite` (free tier, 속도 최적화)
 - bash hook에서 Node.js 파일 분리 (shell escaping 문제 회피)
-- Telegram 전송 없음 — stdout으로만 출력 (Claude Bash 출력에 표시됨)
+- Telegram 전송 없음 — stdout으로만 출력
 
 ## Dead code (제거 가능)
 - `findLatestDayPage(monthPageId)` — 이전 구조에서 소스 페이지를 탐색하던 함수. FIXED_PAGE_ID 구조로 전환 후 main()에서 호출되지 않음
